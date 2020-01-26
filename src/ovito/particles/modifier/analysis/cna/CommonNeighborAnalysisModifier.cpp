@@ -613,49 +613,95 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 	return OTHER;
 }
 
+enum GraphEdgeType {
+	NONE,
+	SHORT,
+	LONG
+};
+
 struct GraphEdge {
 
-	GraphEdge(int _i, int _j, FloatType _length)
-		: i(_i), j(_j), length(_length) {}
+	GraphEdge(int _i, int _j, FloatType _length, int _edgeType)
+		: i(_i), j(_j), length(_length), edgeType(_edgeType) {}
 
 	int i = 0;
 	int j = 0;
 	FloatType length = 0;
+	int edgeType = 0;
+	GraphEdge* nextShort = nullptr;
+	GraphEdge* nextLong = nullptr;
 };
 
 /******************************************************************************
-* Build a list of graph edges (bonds) sorted by length
+* Builds an edge list sorted by length
 ******************************************************************************/
-static std::vector< GraphEdge > buildEdgeList(int nn, Vector3* neighborVectors, FloatType lengthThreshold)
-{
-	// Build sorted edge list
-	GraphEdge shortestExceeder(-1, -1, 100000.);
+class EdgeIterator {
+public:
+	EdgeIterator(int nn, Vector3* neighborVectors, FloatType shortThreshold, FloatType longThreshold) {
 
-	std::vector< GraphEdge > edges;
-	for (int i=0;i<nn;i++) {
-		for (int j=i+1;j<nn;j++) {
-			FloatType length = sqrt((neighborVectors[i] - neighborVectors[j]).squaredLength());
-			if (length < lengthThreshold) {
-				edges.push_back(GraphEdge(i, j, length));
+		if (nn < 12) shortThreshold = 0;
+		if (nn < 14) longThreshold = 0;
+
+		// End points are the shortest edges lengths which exceed their respective thresholds.
+		GraphEdge shortEnd(-1, -1, std::numeric_limits<FloatType>::infinity(), SHORT);
+		GraphEdge longEnd(-1, -1, std::numeric_limits<FloatType>::infinity(), LONG);
+
+		// Find edges which will make up intervals.
+		for (int i=0;i<nn;i++) {
+			for (int j=i+1;j<nn;j++) {
+				FloatType length = sqrt((neighborVectors[i] - neighborVectors[j]).squaredLength());
+
+				int edgeType = NONE;
+				if (i < 12 && j < 12 && length < shortThreshold) {
+					edgeType |= SHORT;
+				}
+				if (length < longThreshold) {
+					edgeType |= LONG;
+				}
+
+				if (edgeType == NONE) {
+					if (length < longEnd.length) {
+						longEnd = GraphEdge(i, j, length, LONG);
+					}
+					else if (length < shortEnd.length) {
+						shortEnd = GraphEdge(i, j, length, SHORT);
+					}
+				}
+				else {
+					edges.push_back(GraphEdge(i, j, length, edgeType));
+				}
 			}
-			else if (length < shortestExceeder.length) {
-				shortestExceeder.i = i;
-				shortestExceeder.j = j;
-				shortestExceeder.length = length;
+		}
+
+		// Sort edges by length to create intervals.
+		boost::sort(edges, [](GraphEdge& a, GraphEdge& b) {
+			return a.length < b.length;
+		});
+
+		if (shortEnd.i != -1) {
+			edges.push_back(shortEnd);
+		}
+		if (longEnd.i != -1) {
+			edges.push_back(longEnd);
+		}
+
+		// Create two paths through intervals: short and long.
+		for (int i=edges.size() - 1;i>=0;i--) {
+			if (edges[i].edgeType & SHORT) {
+				edges[i].nextShort = nextShort;
+				nextShort = &edges[i];
+			}
+			if (edges[i].edgeType & LONG) {
+				edges[i].nextLong = nextLong;
+				nextLong = &edges[i];
 			}
 		}
 	}
 
-	boost::sort(edges, [](GraphEdge& a, GraphEdge& b) {
-		return a.length < b.length;
-	});
-
-	if (shortestExceeder.i != -1) {
-		edges.push_back(shortestExceeder);
-	}
-
-	return edges;
-}
+	std::vector< GraphEdge > edges;
+	GraphEdge* nextLong = nullptr;
+	GraphEdge* nextShort = nullptr;
+};
 
 /******************************************************************************
 * Determines the coordination structure of a single particle using the
@@ -670,7 +716,14 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 	neighQuery.findNeighbors(particleIndex);
 	int numNeighbors = neighQuery.results().size();
 
-	// Get neighbors and calculate vector lengths
+	// Determine which structure types to search for.
+	bool analyzeShort = numNeighbors >= 12 && (typesToIdentify[FCC] || typesToIdentify[HCP] || typesToIdentify[ICO]);
+	bool analyzeLong = numNeighbors >= 14 && typesToIdentify[BCC];
+	if (analyzeLong) numNeighbors = 14;
+	else if (analyzeShort) numNeighbors = 12;
+	else return OTHER;
+
+	// Get neighbors and calculate vector lengths.
 	FloatType neighborLengths[MAX_NEIGHBORS];
 	Vector3 neighborVectors[MAX_NEIGHBORS];
 	for (int i=0;i<numNeighbors;i++) {
@@ -678,112 +731,115 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 		neighborLengths[i] = sqrt(neighborVectors[i].squaredLength());
 	}
 
+	// We will set the threshold for interval start points two thirds of the way between
+	// the first and second neighbor shells.
+	const FloatType x = 2.0f / 3.0f;
+	const FloatType fraction = ((1 - x) * 1 + x * sqrt(2));
+
+	// Calculate length thresholds and local scaling factors.
+	FloatType shortLengthThreshold = 0, longLengthThreshold = 0;
+	FloatType shortLocalScaling = 0, longLocalScaling = 0;
+
+	if (analyzeShort) {
+		int nn = 12;
+		for(int n = 0; n < nn; n++)
+			shortLocalScaling += neighborLengths[n];
+		shortLocalScaling /= nn;
+		shortLengthThreshold = fraction * shortLocalScaling;
+	}
+	if (analyzeLong) {
+		int nn = 14;
+		for(int n = 0; n < 8; n++)
+			longLocalScaling += neighborLengths[n] / sqrt(3.0f / 4.0f);
+		for(int n = 8; n < nn; n++)
+			longLocalScaling += neighborLengths[n];
+		longLocalScaling /= nn;
+		longLengthThreshold = fraction * longLocalScaling;
+	}
+
+	// Use interval width to resolve ambiguities in traditional CNA classification
 	FloatType bestIntervalWidth = 0;
 	CommonNeighborAnalysisModifier::StructureType bestType = OTHER;
 
+	auto it = EdgeIterator(numNeighbors, neighborVectors, shortLengthThreshold, longLengthThreshold);
+
 	/////////// 12 neighbors ///////////
-	if(typesToIdentify[FCC] || typesToIdentify[HCP] || typesToIdentify[ICO]) {
-
-		// Number of neighbors to analyze.
-		int nn = 12; // For FCC, HCP and Icosahedral atoms
-
-		// Early rejection of under-coordinated atoms:
-		if(numNeighbors < nn)
-			return bestType;
-
-		FloatType localScaling = 0;
-		for(int n = 0; n < nn; n++)
-			localScaling += neighborLengths[n];
-		localScaling /= nn;
-
-		FloatType frac = 2.0f / 3.0f;
-		FloatType lengthThreshold = ((1 - frac) * 1 + frac * sqrt(2)) * localScaling;
-		std::vector< GraphEdge > edges = buildEdgeList(nn, neighborVectors, lengthThreshold);
-
+	if(analyzeShort) {
+		int nn = 12; //Number of neighbors to analyze for FCC, HCP and Icosahedral atoms
 		int n4 = 0, n5 = 0;
 		int coordinations[nn] = {0};
 		NeighborBondArray neighborArray;
-		for (int i=0;i<edges.size() - 1;i++) {
-			auto edge = edges[i];
 
-			coordinations[edge.i]++;
-			coordinations[edge.j]++;
-			neighborArray.setNeighborBond(edge.i, edge.j, true);
+		GraphEdge* edge = it.nextShort;
+		GraphEdge* next = edge != nullptr ? edge->nextShort : nullptr;
+		while (next != nullptr) {
+			coordinations[edge->i]++;
+			coordinations[edge->j]++;
+			neighborArray.setNeighborBond(edge->i, edge->j, true);
 
-			if (coordinations[edge.i] == 4) n4++;
-			if (coordinations[edge.i] == 5) {n4--; n5++;}
-			if (coordinations[edge.i] > 5) break;
+			if (coordinations[edge->i] == 4) n4++;
+			if (coordinations[edge->i] == 5) {n4--; n5++;}
+			if (coordinations[edge->i] > 5) break;
 
-			if (coordinations[edge.j] == 4) n4++;
-			if (coordinations[edge.j] == 5) {n4--; n5++;}
-			if (coordinations[edge.j] > 5) break;
+			if (coordinations[edge->j] == 4) n4++;
+			if (coordinations[edge->j] == 5) {n4--; n5++;}
+			if (coordinations[edge->j] > 5) break;
 
-			if (n4 != nn && n5 != nn) continue;
-
-			// Coordination numbers are correct - perform traditional CNA
-			auto type = analyzeSmallSignature(neighborArray, typesToIdentify);
-			if (type == OTHER) continue;
-
-			FloatType intervalWidth = (edges[i + 1].length - edge.length) / localScaling;
-			if (intervalWidth > bestIntervalWidth) {
-				bestIntervalWidth = intervalWidth;
-				bestType = type;
+			if (n4 == nn || n5 == nn) {
+				// Coordination numbers are correct - perform traditional CNA
+				auto type = analyzeSmallSignature(neighborArray, typesToIdentify);
+				if (type != OTHER) {
+					FloatType intervalWidth = (next->length - edge->length) / shortLocalScaling;
+					if (intervalWidth > bestIntervalWidth) {
+						bestIntervalWidth = intervalWidth;
+						bestType = type;
+					}
+				}
 			}
+
+			edge = next;
+			next = next->nextShort;
 		}
 	}
 
 	/////////// 14 neighbors ///////////
-	if(typesToIdentify[BCC]) {
-
-		// Number of neighbors to analyze.
-		int nn = 14; // For BCC atoms
-
-		// Early rejection of under-coordinated atoms:
-		if(numNeighbors < nn)
-			return bestType;
-
-		FloatType localScaling = 0;
-		for(int n = 0; n < 8; n++)
-			localScaling += neighborLengths[n] / sqrt(3.0f / 4.0f);
-		for(int n = 8; n < nn; n++)
-			localScaling += neighborLengths[n];
-		localScaling /= nn;
-
-		FloatType frac = 2.0f / 3.0f;
-		FloatType lengthThreshold = ((1 - frac) * 1 + frac * sqrt(2)) * localScaling;
-		std::vector< GraphEdge > edges = buildEdgeList(nn, neighborVectors, lengthThreshold);
-
+	if(analyzeLong) {
+		int nn = 14; //Number of neighbors to analyze for BCC atoms
 		int n4 = 0, n6 = 0;
 		int coordinations[nn] = {0};
 		NeighborBondArray neighborArray;
-		for (int i=0;i<edges.size() - 1;i++) {
-			auto edge = edges[i];
 
-			coordinations[edge.i]++;
-			coordinations[edge.j]++;
-			neighborArray.setNeighborBond(edge.i, edge.j, true);
+		GraphEdge* edge = it.nextLong;
+		GraphEdge* next = edge != nullptr ? edge->nextLong : nullptr;
+		while (next != nullptr) {
+			coordinations[edge->i]++;
+			coordinations[edge->j]++;
+			neighborArray.setNeighborBond(edge->i, edge->j, true);
 
-			if (coordinations[edge.i] == 4) n4++;
-			if (coordinations[edge.i] == 5) n4--;
-			if (coordinations[edge.i] == 6) n6++;
-			if (coordinations[edge.i] > 6) break;
+			if (coordinations[edge->i] == 4) n4++;
+			if (coordinations[edge->i] == 5) n4--;
+			if (coordinations[edge->i] == 6) n6++;
+			if (coordinations[edge->i] > 6) break;
 
-			if (coordinations[edge.j] == 4) n4++;
-			if (coordinations[edge.j] == 5) n4--;
-			if (coordinations[edge.j] == 6) n6++;
-			if (coordinations[edge.j] > 6) break;
+			if (coordinations[edge->j] == 4) n4++;
+			if (coordinations[edge->j] == 5) n4--;
+			if (coordinations[edge->j] == 6) n6++;
+			if (coordinations[edge->j] > 6) break;
 
-			if (n4 != 6 || n6 != 8) continue;
-
-			// Coordination numbers are correct - perform traditional CNA
-			auto type = analyzeLargeSignature(neighborArray, typesToIdentify);
-			if (type == OTHER) continue;
-
-			FloatType intervalWidth = (edges[i + 1].length - edge.length) / localScaling;
-			if (intervalWidth > bestIntervalWidth) {
-				bestIntervalWidth = intervalWidth;
-				bestType = type;
+			if (n4 == 6 && n6 == 8) {
+				// Coordination numbers are correct - perform traditional CNA
+				auto type = analyzeLargeSignature(neighborArray, typesToIdentify);
+				if (type != OTHER) {
+					FloatType intervalWidth = (next->length - edge->length) / longLocalScaling;
+					if (intervalWidth > bestIntervalWidth) {
+						bestIntervalWidth = intervalWidth;
+						bestType = type;
+					}
+				}
 			}
+
+			edge = next;
+			next = next->nextLong;
 		}
 	}
 
