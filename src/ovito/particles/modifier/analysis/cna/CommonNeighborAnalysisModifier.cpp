@@ -84,6 +84,9 @@ Future<AsynchronousModifier::ComputeEnginePtr> CommonNeighborAnalysisModifier::c
 	if(mode() == AdaptiveCutoffMode) {
 		return std::make_shared<AdaptiveCNAEngine>(particles, posProperty->storage(), simCell->data(), getTypesToIdentify(NUM_STRUCTURE_TYPES), std::move(selectionProperty));
 	}
+	else if(mode() == IntervalCutoffMode) {
+		return std::make_shared<IntervalCNAEngine>(particles, posProperty->storage(), simCell->data(), getTypesToIdentify(NUM_STRUCTURE_TYPES), std::move(selectionProperty));
+	}
 	else if(mode() == BondMode) {
 		particles->expectBonds()->verifyIntegrity();
 		const PropertyObject* topologyProperty = particles->expectBonds()->expectProperty(BondsObject::TopologyProperty);
@@ -130,6 +133,39 @@ void CommonNeighborAnalysisModifier::AdaptiveCNAEngine::perform()
 
 	// Release data that is no longer needed.
 	releaseWorkingData();
+}
+
+/******************************************************************************
+* Performs the actual analysis. This method is executed in a worker thread.
+******************************************************************************/
+void CommonNeighborAnalysisModifier::IntervalCNAEngine::perform()
+{
+	task()->setProgressText(tr("Performing interval common neighbor analysis"));
+
+	// Prepare the neighbor list.
+	NearestNeighborFinder neighFinder(MAX_NEIGHBORS);
+	if(!neighFinder.prepare(positions(), cell(), selection(), task().get()))
+		return;
+
+	// Create output storage.
+	PropertyAccess<int> output(structures());
+
+	// Perform analysis on each particle.
+	if(!selection()) {
+		parallelFor(positions()->size(), *task(), [&](size_t index) {
+			output[index] = determineStructureInterval(neighFinder, index, typesToIdentify());
+		});
+	}
+	else {
+		ConstPropertyAccess<int> selectionData(selection());
+		parallelFor(positions()->size(), *task(), [&](size_t index) {
+			// Skip particles that are not included in the analysis.
+			if(selectionData[index])
+				output[index] = determineStructureInterval(neighFinder, index, typesToIdentify());
+			else
+				output[index] = OTHER;
+		});
+	}
 }
 
 /******************************************************************************
@@ -387,6 +423,71 @@ int CommonNeighborAnalysisModifier::calcMaxChainLength(CNAPairBond* neighborBond
 	return maxChainLength;
 }
 
+CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::analyzeSmallSignature(NeighborBondArray& neighborArray, const QVector<bool>& typesToIdentify)
+{
+	int nn = 12;
+	int n421 = 0;
+	int n422 = 0;
+	int n555 = 0;
+	for(int ni = 0; ni < nn; ni++) {
+
+		// Determine number of neighbors the two atoms have in common.
+		unsigned int commonNeighbors;
+		int numCommonNeighbors = findCommonNeighbors(neighborArray, ni, commonNeighbors, nn);
+		if(numCommonNeighbors != 4 && numCommonNeighbors != 5)
+			break;
+
+		// Determine the number of bonds among the common neighbors.
+		CNAPairBond neighborBonds[MAX_NEIGHBORS*MAX_NEIGHBORS];
+		int numNeighborBonds = findNeighborBonds(neighborArray, commonNeighbors, nn, neighborBonds);
+		if(numNeighborBonds != 2 && numNeighborBonds != 5)
+			break;
+
+		// Determine the number of bonds in the longest continuous chain.
+		int maxChainLength = calcMaxChainLength(neighborBonds, numNeighborBonds);
+		if(numCommonNeighbors == 4 && numNeighborBonds == 2) {
+			if(maxChainLength == 1) n421++;
+			else if(maxChainLength == 2) n422++;
+			else break;
+		}
+		else if(numCommonNeighbors == 5 && numNeighborBonds == 5 && maxChainLength == 5) n555++;
+		else break;
+	}
+	if(n421 == 12 && typesToIdentify[FCC]) return FCC;
+	else if(n421 == 6 && n422 == 6 && typesToIdentify[HCP]) return HCP;
+	else if(n555 == 12 && typesToIdentify[ICO]) return ICO;
+	return OTHER;
+}
+
+CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::analyzeLargeSignature(NeighborBondArray& neighborArray, const QVector<bool>& typesToIdentify)
+{
+	int nn = 14;
+	int n444 = 0;
+	int n666 = 0;
+	for(int ni = 0; ni < nn; ni++) {
+
+		// Determine number of neighbors the two atoms have in common.
+		unsigned int commonNeighbors;
+		int numCommonNeighbors = findCommonNeighbors(neighborArray, ni, commonNeighbors, nn);
+		if(numCommonNeighbors != 4 && numCommonNeighbors != 6)
+			break;
+
+		// Determine the number of bonds among the common neighbors.
+		CNAPairBond neighborBonds[MAX_NEIGHBORS*MAX_NEIGHBORS];
+		int numNeighborBonds = findNeighborBonds(neighborArray, commonNeighbors, nn, neighborBonds);
+		if(numNeighborBonds != 4 && numNeighborBonds != 6)
+			break;
+
+		// Determine the number of bonds in the longest continuous chain.
+		int maxChainLength = calcMaxChainLength(neighborBonds, numNeighborBonds);
+		if(numCommonNeighbors == 4 && numNeighborBonds == 4 && maxChainLength == 4) n444++;
+		else if(numCommonNeighbors == 6 && numNeighborBonds == 6 && maxChainLength == 6) n666++;
+		else break;
+	}
+	if(n666 == 8 && n444 == 6) return BCC;
+	return OTHER;
+}
+
 /******************************************************************************
 * Determines the coordination structure of a single particle using the
 * adaptive common neighbor analysis method.
@@ -510,6 +611,183 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 	}
 
 	return OTHER;
+}
+
+struct GraphEdge {
+
+	GraphEdge(int _i, int _j, FloatType _length)
+		: i(_i), j(_j), length(_length) {}
+
+	int i = 0;
+	int j = 0;
+	FloatType length = 0;
+};
+
+/******************************************************************************
+* Build a list of graph edges (bonds) sorted by length
+******************************************************************************/
+static std::vector< GraphEdge > buildEdgeList(int nn, Vector3* neighborVectors, FloatType lengthThreshold)
+{
+	// Build sorted edge list
+	GraphEdge shortestExceeder(-1, -1, 100000.);
+
+	std::vector< GraphEdge > edges;
+	for (int i=0;i<nn;i++) {
+		for (int j=i+1;j<nn;j++) {
+			FloatType length = sqrt((neighborVectors[i] - neighborVectors[j]).squaredLength());
+			if (length < lengthThreshold) {
+				edges.push_back(GraphEdge(i, j, length));
+			}
+			else if (length < shortestExceeder.length) {
+				shortestExceeder.i = i;
+				shortestExceeder.j = j;
+				shortestExceeder.length = length;
+			}
+		}
+	}
+
+	boost::sort(edges, [](GraphEdge& a, GraphEdge& b) {
+		return a.length < b.length;
+	});
+
+	if (shortestExceeder.i != -1) {
+		edges.push_back(shortestExceeder);
+	}
+
+	return edges;
+}
+
+/******************************************************************************
+* Determines the coordination structure of a single particle using the
+* interval common neighbor analysis method.
+******************************************************************************/
+CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::determineStructureInterval(NearestNeighborFinder& neighFinder, size_t particleIndex, const QVector<bool>& typesToIdentify)
+{
+	// Construct local neighbor list builder.
+	NearestNeighborFinder::Query<MAX_NEIGHBORS> neighQuery(neighFinder);
+
+	// Find N nearest neighbors of current atom.
+	neighQuery.findNeighbors(particleIndex);
+	int numNeighbors = neighQuery.results().size();
+
+	// Get neighbors and calculate vector lengths
+	FloatType neighborLengths[MAX_NEIGHBORS];
+	Vector3 neighborVectors[MAX_NEIGHBORS];
+	for (int i=0;i<numNeighbors;i++) {
+		neighborVectors[i] = neighQuery.results()[i].delta;
+		neighborLengths[i] = sqrt(neighborVectors[i].squaredLength());
+	}
+
+	FloatType bestIntervalWidth = 0;
+	CommonNeighborAnalysisModifier::StructureType bestType = OTHER;
+
+	/////////// 12 neighbors ///////////
+	if(typesToIdentify[FCC] || typesToIdentify[HCP] || typesToIdentify[ICO]) {
+
+		// Number of neighbors to analyze.
+		int nn = 12; // For FCC, HCP and Icosahedral atoms
+
+		// Early rejection of under-coordinated atoms:
+		if(numNeighbors < nn)
+			return bestType;
+
+		FloatType localScaling = 0;
+		for(int n = 0; n < nn; n++)
+			localScaling += neighborLengths[n];
+		localScaling /= nn;
+
+		FloatType frac = 2.0f / 3.0f;
+		FloatType lengthThreshold = ((1 - frac) * 1 + frac * sqrt(2)) * localScaling;
+		std::vector< GraphEdge > edges = buildEdgeList(nn, neighborVectors, lengthThreshold);
+
+		int n4 = 0, n5 = 0;
+		int coordinations[nn] = {0};
+		NeighborBondArray neighborArray;
+		for (int i=0;i<edges.size() - 1;i++) {
+			auto edge = edges[i];
+
+			coordinations[edge.i]++;
+			coordinations[edge.j]++;
+			neighborArray.setNeighborBond(edge.i, edge.j, true);
+
+			if (coordinations[edge.i] == 4) n4++;
+			if (coordinations[edge.i] == 5) {n4--; n5++;}
+			if (coordinations[edge.i] > 5) break;
+
+			if (coordinations[edge.j] == 4) n4++;
+			if (coordinations[edge.j] == 5) {n4--; n5++;}
+			if (coordinations[edge.j] > 5) break;
+
+			if (n4 != nn && n5 != nn) continue;
+
+			// Coordination numbers are correct - perform traditional CNA
+			auto type = analyzeSmallSignature(neighborArray, typesToIdentify);
+			if (type == OTHER) continue;
+
+			FloatType intervalWidth = (edges[i + 1].length - edge.length) / localScaling;
+			if (intervalWidth > bestIntervalWidth) {
+				bestIntervalWidth = intervalWidth;
+				bestType = type;
+			}
+		}
+	}
+
+	/////////// 14 neighbors ///////////
+	if(typesToIdentify[BCC]) {
+
+		// Number of neighbors to analyze.
+		int nn = 14; // For BCC atoms
+
+		// Early rejection of under-coordinated atoms:
+		if(numNeighbors < nn)
+			return bestType;
+
+		FloatType localScaling = 0;
+		for(int n = 0; n < 8; n++)
+			localScaling += neighborLengths[n] / sqrt(3.0f / 4.0f);
+		for(int n = 8; n < nn; n++)
+			localScaling += neighborLengths[n];
+		localScaling /= nn;
+
+		FloatType frac = 2.0f / 3.0f;
+		FloatType lengthThreshold = ((1 - frac) * 1 + frac * sqrt(2)) * localScaling;
+		std::vector< GraphEdge > edges = buildEdgeList(nn, neighborVectors, lengthThreshold);
+
+		int n4 = 0, n6 = 0;
+		int coordinations[nn] = {0};
+		NeighborBondArray neighborArray;
+		for (int i=0;i<edges.size() - 1;i++) {
+			auto edge = edges[i];
+
+			coordinations[edge.i]++;
+			coordinations[edge.j]++;
+			neighborArray.setNeighborBond(edge.i, edge.j, true);
+
+			if (coordinations[edge.i] == 4) n4++;
+			if (coordinations[edge.i] == 5) n4--;
+			if (coordinations[edge.i] == 6) n6++;
+			if (coordinations[edge.i] > 6) break;
+
+			if (coordinations[edge.j] == 4) n4++;
+			if (coordinations[edge.j] == 5) n4--;
+			if (coordinations[edge.j] == 6) n6++;
+			if (coordinations[edge.j] > 6) break;
+
+			if (n4 != 6 || n6 != 8) continue;
+
+			// Coordination numbers are correct - perform traditional CNA
+			auto type = analyzeLargeSignature(neighborArray, typesToIdentify);
+			if (type == OTHER) continue;
+
+			FloatType intervalWidth = (edges[i + 1].length - edge.length) / localScaling;
+			if (intervalWidth > bestIntervalWidth) {
+				bestIntervalWidth = intervalWidth;
+				bestType = type;
+			}
+		}
+	}
+
+	return bestType;
 }
 
 /******************************************************************************
