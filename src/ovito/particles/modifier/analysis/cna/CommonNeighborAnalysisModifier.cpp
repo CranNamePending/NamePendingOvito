@@ -526,36 +526,9 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 				neighborArray.setNeighborBond(ni1, ni2, (neighQuery.results()[ni1].delta - neighQuery.results()[ni2].delta).squaredLength() <= localCutoffSquared);
 		}
 
-		int n421 = 0;
-		int n422 = 0;
-		int n555 = 0;
-		for(int ni = 0; ni < nn; ni++) {
-
-			// Determine number of neighbors the two atoms have in common.
-			unsigned int commonNeighbors;
-			int numCommonNeighbors = findCommonNeighbors(neighborArray, ni, commonNeighbors, nn);
-			if(numCommonNeighbors != 4 && numCommonNeighbors != 5)
-				break;
-
-			// Determine the number of bonds among the common neighbors.
-			CNAPairBond neighborBonds[MAX_NEIGHBORS*MAX_NEIGHBORS];
-			int numNeighborBonds = findNeighborBonds(neighborArray, commonNeighbors, nn, neighborBonds);
-			if(numNeighborBonds != 2 && numNeighborBonds != 5)
-				break;
-
-			// Determine the number of bonds in the longest continuous chain.
-			int maxChainLength = calcMaxChainLength(neighborBonds, numNeighborBonds);
-			if(numCommonNeighbors == 4 && numNeighborBonds == 2) {
-				if(maxChainLength == 1) n421++;
-				else if(maxChainLength == 2) n422++;
-				else break;
-			}
-			else if(numCommonNeighbors == 5 && numNeighborBonds == 5 && maxChainLength == 5) n555++;
-			else break;
-		}
-		if(n421 == 12 && typesToIdentify[FCC]) return FCC;
-		else if(n421 == 6 && n422 == 6 && typesToIdentify[HCP]) return HCP;
-		else if(n555 == 12 && typesToIdentify[ICO]) return ICO;
+		auto type = analyzeSmallSignature(neighborArray, typesToIdentify);
+		if (type != OTHER)
+			return type;
 	}
 
 	/////////// 14 neighbors ///////////
@@ -585,29 +558,9 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 				neighborArray.setNeighborBond(ni1, ni2, (neighQuery.results()[ni1].delta - neighQuery.results()[ni2].delta).squaredLength() <= localCutoffSquared);
 		}
 
-		int n444 = 0;
-		int n666 = 0;
-		for(int ni = 0; ni < nn; ni++) {
-
-			// Determine number of neighbors the two atoms have in common.
-			unsigned int commonNeighbors;
-			int numCommonNeighbors = findCommonNeighbors(neighborArray, ni, commonNeighbors, nn);
-			if(numCommonNeighbors != 4 && numCommonNeighbors != 6)
-				break;
-
-			// Determine the number of bonds among the common neighbors.
-			CNAPairBond neighborBonds[MAX_NEIGHBORS*MAX_NEIGHBORS];
-			int numNeighborBonds = findNeighborBonds(neighborArray, commonNeighbors, nn, neighborBonds);
-			if(numNeighborBonds != 4 && numNeighborBonds != 6)
-				break;
-
-			// Determine the number of bonds in the longest continuous chain.
-			int maxChainLength = calcMaxChainLength(neighborBonds, numNeighborBonds);
-			if(numCommonNeighbors == 4 && numNeighborBonds == 4 && maxChainLength == 4) n444++;
-			else if(numCommonNeighbors == 6 && numNeighborBonds == 6 && maxChainLength == 6) n666++;
-			else break;
-		}
-		if(n666 == 8 && n444 == 6) return BCC;
+		auto type = analyzeLargeSignature(neighborArray, typesToIdentify);
+		if (type != OTHER)
+			return type;
 	}
 
 	return OTHER;
@@ -873,61 +826,14 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 	}
 
 	if(numNeighbors == 12) { // Detect FCC and HCP atoms each having 12 NN.
-		int n421 = 0;
-		int n422 = 0;
-		int n555 = 0;
-		for(int ni = 0; ni < 12; ni++) {
-
-			// Determine number of neighbors the two atoms have in common.
-			unsigned int commonNeighbors;
-			int numCommonNeighbors = findCommonNeighbors(neighborArray, ni, commonNeighbors, 12);
-			if(numCommonNeighbors != 4 && numCommonNeighbors != 5)
-				return OTHER;
-
-			// Determine the number of bonds among the common neighbors.
-			CNAPairBond neighborBonds[MAX_NEIGHBORS*MAX_NEIGHBORS];
-			int numNeighborBonds = findNeighborBonds(neighborArray, commonNeighbors, 12, neighborBonds);
-			if(numNeighborBonds != 2 && numNeighborBonds != 5)
-				break;
-
-			// Determine the number of bonds in the longest continuous chain.
-			int maxChainLength = calcMaxChainLength(neighborBonds, numNeighborBonds);
-			if(numCommonNeighbors == 4 && numNeighborBonds == 2) {
-				if(maxChainLength == 1) n421++;
-				else if(maxChainLength == 2) n422++;
-				else return OTHER;
-			}
-			else if(numCommonNeighbors == 5 && numNeighborBonds == 5 && maxChainLength == 5) n555++;
-			else return OTHER;
-		}
-		if(n421 == 12 && typesToIdentify[FCC]) return FCC;
-		else if(n421 == 6 && n422 == 6 && typesToIdentify[HCP]) return HCP;
-		else if(n555 == 12 && typesToIdentify[ICO]) return ICO;
+		auto type = analyzeSmallSignature(neighborArray, typesToIdentify);
+		if (type != OTHER)
+			return type;
 	}
 	else if(numNeighbors == 14 && typesToIdentify[BCC]) { // Detect BCC atoms having 14 NN (in 1st and 2nd shell).
-		int n444 = 0;
-		int n666 = 0;
-		for(int ni = 0; ni < 14; ni++) {
-
-			// Determine number of neighbors the two atoms have in common.
-			unsigned int commonNeighbors;
-			int numCommonNeighbors = findCommonNeighbors(neighborArray, ni, commonNeighbors, 14);
-			if(numCommonNeighbors != 4 && numCommonNeighbors != 6)
-				return OTHER;
-
-			// Determine the number of bonds among the common neighbors.
-			CNAPairBond neighborBonds[MAX_NEIGHBORS*MAX_NEIGHBORS];
-			int numNeighborBonds = findNeighborBonds(neighborArray, commonNeighbors, 14, neighborBonds);
-			if(numNeighborBonds != 4 && numNeighborBonds != 6)
-				break;
-
-			// Determine the number of bonds in the longest continuous chain.
-			int maxChainLength = calcMaxChainLength(neighborBonds, numNeighborBonds);
-			if(numCommonNeighbors == 4 && numNeighborBonds == 4 && maxChainLength == 4) n444++;
-			else if(numCommonNeighbors == 6 && numNeighborBonds == 6 && maxChainLength == 6) n666++;
-			else return OTHER;
-		}
-		if(n666 == 8 && n444 == 6) return BCC;
+		auto type = analyzeLargeSignature(neighborArray, typesToIdentify);
+		if (type != OTHER)
+			return type;
 	}
 
 	return OTHER;
