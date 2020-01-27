@@ -718,7 +718,7 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 
 	/////////// 12 neighbors ///////////
 	if(analyzeShort) {
-		int nn = 12; //Number of neighbors to analyze for FCC, HCP and Icosahedral atoms
+		constexpr int nn = 12; //Number of neighbors to analyze for FCC, HCP and Icosahedral atoms
 		int n4 = 0, n5 = 0;
 		int coordinations[nn] = {0};
 		NeighborBondArray neighborArray;
@@ -757,7 +757,7 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 
 	/////////// 14 neighbors ///////////
 	if(analyzeLong) {
-		int nn = 14; //Number of neighbors to analyze for BCC atoms
+		constexpr int nn = 14; //Number of neighbors to analyze for BCC atoms
 		int n4 = 0, n6 = 0;
 		int coordinations[nn] = {0};
 		NeighborBondArray neighborArray;
