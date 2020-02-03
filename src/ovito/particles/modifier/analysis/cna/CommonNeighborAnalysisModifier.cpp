@@ -691,10 +691,10 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 
 	// Calculate length thresholds and local scaling factors.
 	FloatType shortLengthThreshold = 0, longLengthThreshold = 0;
-	FloatType shortLocalScaling = 0, longLocalScaling = 0;
 
 	if (analyzeShort) {
 		int nn = 12;
+		FloatType shortLocalScaling = 0;
 		for(int n = 0; n < nn; n++)
 			shortLocalScaling += neighborLengths[n];
 		shortLocalScaling /= nn;
@@ -702,6 +702,7 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 	}
 	if (analyzeLong) {
 		int nn = 14;
+		FloatType longLocalScaling = 0;
 		for(int n = 0; n < 8; n++)
 			longLocalScaling += neighborLengths[n] / sqrt(3.0f / 4.0f);
 		for(int n = 8; n < nn; n++)
@@ -742,7 +743,7 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 				// Coordination numbers are correct - perform traditional CNA
 				auto type = analyzeSmallSignature(neighborArray, typesToIdentify);
 				if (type != OTHER) {
-					FloatType intervalWidth = (next->length - edge->length) / shortLocalScaling;
+					FloatType intervalWidth = next->length - edge->length;
 					if (intervalWidth > bestIntervalWidth) {
 						bestIntervalWidth = intervalWidth;
 						bestType = type;
@@ -783,7 +784,7 @@ CommonNeighborAnalysisModifier::StructureType CommonNeighborAnalysisModifier::de
 				// Coordination numbers are correct - perform traditional CNA
 				auto type = analyzeLargeSignature(neighborArray, typesToIdentify);
 				if (type != OTHER) {
-					FloatType intervalWidth = (next->length - edge->length) / longLocalScaling;
+					FloatType intervalWidth = next->length - edge->length;
 					if (intervalWidth > bestIntervalWidth) {
 						bestIntervalWidth = intervalWidth;
 						bestType = type;
