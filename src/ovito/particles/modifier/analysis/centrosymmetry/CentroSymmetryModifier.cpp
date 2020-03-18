@@ -25,23 +25,33 @@
 #include <ovito/particles/objects/ParticlesObject.h>
 #include <ovito/stdobj/properties/PropertyAccess.h>
 #include <ovito/stdobj/simcell/SimulationCellObject.h>
+#include <ovito/stdobj/table/DataTable.h>
+#include <ovito/core/dataset/DataSet.h>
 #include <ovito/core/utilities/concurrent/ParallelFor.h>
 #include <ovito/core/utilities/units/UnitsManager.h>
 #include <ovito/core/dataset/pipeline/ModifierApplication.h>
 #include "CentroSymmetryModifier.h"
+#include <mwm_csp/mwm_csp.h>
+
 
 namespace Ovito { namespace Particles {
 
 IMPLEMENT_OVITO_CLASS(CentroSymmetryModifier);
 DEFINE_PROPERTY_FIELD(CentroSymmetryModifier, numNeighbors);
+DEFINE_PROPERTY_FIELD(CentroSymmetryModifier, mode);
+DEFINE_PROPERTY_FIELD(CentroSymmetryModifier, normalize);
 SET_PROPERTY_FIELD_LABEL(CentroSymmetryModifier, numNeighbors, "Number of neighbors");
+SET_PROPERTY_FIELD_LABEL(CentroSymmetryModifier, mode, "Mode");
+SET_PROPERTY_FIELD_LABEL(CentroSymmetryModifier, normalize, "Normalize");
 SET_PROPERTY_FIELD_UNITS_AND_RANGE(CentroSymmetryModifier, numNeighbors, IntegerParameterUnit, 2, CentroSymmetryModifier::MAX_CSP_NEIGHBORS);
 
 /******************************************************************************
 * Constructs the modifier object.
 ******************************************************************************/
 CentroSymmetryModifier::CentroSymmetryModifier(DataSet* dataset) : AsynchronousModifier(dataset),
-	_numNeighbors(12)
+	_numNeighbors(12),
+	_mode(ConventionalMode),
+	_normalize(false)
 {
 }
 
@@ -71,7 +81,7 @@ Future<AsynchronousModifier::ComputeEnginePtr> CentroSymmetryModifier::createEng
 		throwException(tr("The number of neighbors to take into account in the centrosymmetry calculation must be a positive and even integer."));
 
 	// Create engine object. Pass all relevant modifier parameters to the engine as well as the input data.
-	return std::make_shared<CentroSymmetryEngine>(particles, posProperty->storage(), simCell->data(), numNeighbors());
+	return std::make_shared<CentroSymmetryEngine>(particles, posProperty->storage(), simCell->data(), numNeighbors(), mode(), normalize());
 }
 
 /******************************************************************************
@@ -92,8 +102,26 @@ void CentroSymmetryModifier::CentroSymmetryEngine::perform()
 
 	// Perform analysis on each particle.
 	parallelFor(positions()->size(), *this, [&](size_t index) {
-		output[index] = computeCSP(neighFinder, index);
+		output[index] = computeCSP(neighFinder, index, _mode, _normalize);
 	});
+
+	PropertyAccess<FloatType> cspArray(csp());
+
+	// Determine histogram bin size based on maximum RMSD value.
+	const size_t numHistogramBins = 100;
+	_cspHistogram = std::make_shared<PropertyStorage>(numHistogramBins, PropertyStorage::Int64, 1, 0, tr("Count"), true, DataTable::YProperty);
+	FloatType cspHistogramBinSize = (cspArray.size() != 0) ? (FloatType(1.01) * *boost::max_element(cspArray) / numHistogramBins) : 0;
+	if(cspHistogramBinSize <= 0) cspHistogramBinSize = 1;
+	_cspHistogramRange = cspHistogramBinSize * numHistogramBins;
+
+	// Perform binning of RMSD values.
+	PropertyAccess<qlonglong> histogramCounts(_cspHistogram);
+	for(FloatType cspValue : cspArray) {
+		OVITO_ASSERT(cspValue >= 0);
+		int binIndex = cspValue / cspHistogramBinSize;
+		if(binIndex < numHistogramBins)
+			histogramCounts[binIndex]++;
+	}
 
 	// Release data that is no longer needed.
 	_positions.reset();
@@ -102,7 +130,7 @@ void CentroSymmetryModifier::CentroSymmetryEngine::perform()
 /******************************************************************************
 * Computes the centrosymmetry parameter of a single particle.
 ******************************************************************************/
-FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder, size_t particleIndex)
+FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder, size_t particleIndex, int mode, bool normalize)
 {
 	// Find k nearest neighbor of current atom.
 	NearestNeighborFinder::Query<MAX_CSP_NEIGHBORS> neighQuery(neighFinder);
@@ -110,20 +138,44 @@ FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder,
 
 	int numNN = neighQuery.results().size();
 
-    // R = Ri + Rj for each of npairs i,j pairs among numNN neighbors.
-	FloatType pairs[MAX_CSP_NEIGHBORS*MAX_CSP_NEIGHBORS/2];
-	FloatType* p = pairs;
-	for(auto ij = neighQuery.results().begin(); ij != neighQuery.results().end(); ++ij) {
-		for(auto ik = ij + 1; ik != neighQuery.results().end(); ++ik) {
-			*p++ = (ik->delta + ij->delta).squaredLength();
+	FloatType csp = 0;
+	if (mode == CentroSymmetryModifier::ConventionalMode) {
+		// R = Ri + Rj for each of npairs i,j pairs among numNN neighbors.
+		FloatType pairs[MAX_CSP_NEIGHBORS*MAX_CSP_NEIGHBORS/2];
+		FloatType* p = pairs;
+		for(auto ij = neighQuery.results().begin(); ij != neighQuery.results().end(); ++ij) {
+			for(auto ik = ij + 1; ik != neighQuery.results().end(); ++ik) {
+				*p++ = (ik->delta + ij->delta).squaredLength();
+			}
 		}
+
+		// Find NN/2 smallest pair distances from the list.
+		std::partial_sort(pairs, pairs + (numNN/2), p);
+
+		// Centrosymmetry = sum of numNN/2 smallest squared values.
+		csp = std::accumulate(pairs, pairs + (numNN/2), FloatType(0), std::plus<FloatType>());
+	}
+	else {
+		double P[MAX_CSP_NEIGHBORS][3];
+		for(size_t i=0;i<numNN;i++) {
+			auto v = neighQuery.results()[i].delta;
+			P[i][0] = (double)v.x();
+			P[i][1] = (double)v.y();
+			P[i][2] = (double)v.z();
+		}
+		
+		csp = (FloatType)calculate_mwm_csp(numNN, P);
 	}
 
-    // Find NN/2 smallest pair distances from the list.
-	std::partial_sort(pairs, pairs + (numNN/2), p);
+	// Normalize (if selected)
+	if (normalize) {
+		FloatType acc = 0;
+		for(auto it = neighQuery.results().begin(); it != neighQuery.results().end(); ++it)
+			acc += (it->delta).squaredLength();
+		csp /= 2 * acc;
+	}
 
-    // Centrosymmetry = sum of numNN/2 smallest squared values.
-    return std::accumulate(pairs, pairs + (numNN/2), FloatType(0), std::plus<FloatType>());
+	return csp;
 }
 
 /******************************************************************************
@@ -138,6 +190,12 @@ void CentroSymmetryModifier::CentroSymmetryEngine::emitResults(TimePoint time, M
 
 	OVITO_ASSERT(csp()->size() == particles->elementCount());
 	particles->createProperty(csp());
+
+	// Output CSP histogram.
+	DataTable* table = state.createObject<DataTable>(QStringLiteral("csp-centrosymmetry"), modApp, DataTable::Line, tr("CSP distribution"), cspHistogram());
+	table->setAxisLabelX(tr("CSP"));
+	table->setIntervalStart(0);
+	table->setIntervalEnd(cspHistogramRange());
 }
 
 }	// End of namespace
