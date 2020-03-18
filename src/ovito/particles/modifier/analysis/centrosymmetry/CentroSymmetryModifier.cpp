@@ -39,10 +39,8 @@ namespace Ovito { namespace Particles {
 IMPLEMENT_OVITO_CLASS(CentroSymmetryModifier);
 DEFINE_PROPERTY_FIELD(CentroSymmetryModifier, numNeighbors);
 DEFINE_PROPERTY_FIELD(CentroSymmetryModifier, mode);
-DEFINE_PROPERTY_FIELD(CentroSymmetryModifier, normalize);
 SET_PROPERTY_FIELD_LABEL(CentroSymmetryModifier, numNeighbors, "Number of neighbors");
 SET_PROPERTY_FIELD_LABEL(CentroSymmetryModifier, mode, "Mode");
-SET_PROPERTY_FIELD_LABEL(CentroSymmetryModifier, normalize, "Normalize");
 SET_PROPERTY_FIELD_UNITS_AND_RANGE(CentroSymmetryModifier, numNeighbors, IntegerParameterUnit, 2, CentroSymmetryModifier::MAX_CSP_NEIGHBORS);
 
 /******************************************************************************
@@ -50,8 +48,7 @@ SET_PROPERTY_FIELD_UNITS_AND_RANGE(CentroSymmetryModifier, numNeighbors, Integer
 ******************************************************************************/
 CentroSymmetryModifier::CentroSymmetryModifier(DataSet* dataset) : AsynchronousModifier(dataset),
 	_numNeighbors(12),
-	_mode(ConventionalMode),
-	_normalize(false)
+	_mode(ConventionalMode)
 {
 }
 
@@ -81,7 +78,7 @@ Future<AsynchronousModifier::ComputeEnginePtr> CentroSymmetryModifier::createEng
 		throwException(tr("The number of neighbors to take into account in the centrosymmetry calculation must be a positive and even integer."));
 
 	// Create engine object. Pass all relevant modifier parameters to the engine as well as the input data.
-	return std::make_shared<CentroSymmetryEngine>(particles, posProperty->storage(), simCell->data(), numNeighbors(), mode(), normalize());
+	return std::make_shared<CentroSymmetryEngine>(particles, posProperty->storage(), simCell->data(), numNeighbors(), mode());
 }
 
 /******************************************************************************
@@ -102,7 +99,7 @@ void CentroSymmetryModifier::CentroSymmetryEngine::perform()
 
 	// Perform analysis on each particle.
 	parallelFor(positions()->size(), *this, [&](size_t index) {
-		output[index] = computeCSP(neighFinder, index, _mode, _normalize);
+		output[index] = computeCSP(neighFinder, index, _mode);
 	});
 
 	PropertyAccess<FloatType> cspArray(csp());
@@ -130,7 +127,7 @@ void CentroSymmetryModifier::CentroSymmetryEngine::perform()
 /******************************************************************************
 * Computes the centrosymmetry parameter of a single particle.
 ******************************************************************************/
-FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder, size_t particleIndex, int mode, bool normalize)
+FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder, size_t particleIndex, int mode)
 {
 	// Find k nearest neighbor of current atom.
 	NearestNeighborFinder::Query<MAX_CSP_NEIGHBORS> neighQuery(neighFinder);
@@ -165,14 +162,6 @@ FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder,
 		}
 		
 		csp = (FloatType)calculate_mwm_csp(numNN, P);
-	}
-
-	// Normalize (if selected)
-	if (normalize) {
-		FloatType acc = 0;
-		for(auto it = neighQuery.results().begin(); it != neighQuery.results().end(); ++it)
-			acc += (it->delta).squaredLength();
-		csp /= 2 * acc;
 	}
 
 	return csp;

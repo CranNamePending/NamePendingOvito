@@ -74,11 +74,6 @@ void CentroSymmetryModifierEditor::createUI(const RolloutInsertionParameters& ro
 	layout3->addWidget(conventionalModeBtn);
 	layout3->addWidget(matchingModeBtn);
 
-	// Normalization checkbox.
-	BooleanParameterUI* normalizePUI = new BooleanParameterUI(this, PROPERTY_FIELD(CentroSymmetryModifier::normalize));
-	layout3->addWidget(normalizePUI->checkBox(), 2, 0);
-	normalizePUI->checkBox()->setText(tr("Normalize"));
-
 	// Create plot widget for CSP distribution.
 	_cspPlotWidget = new DataTablePlotWidget();
 	_cspPlotWidget->setMinimumHeight(200);

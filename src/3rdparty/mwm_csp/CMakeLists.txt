@@ -20,23 +20,24 @@
 #
 #######################################################################################
 
-IF(OVITO_BUILD_GUI)
-    ADD_SUBDIRECTORY(qwt)
+# Build library.
+ADD_LIBRARY(MinimumWeightMatchingCentrosymmetry
+	mwm_csp.cpp
+)
+
+# Give our library file a new name to not confuse it with any system versions of the library.
+SET_TARGET_PROPERTIES(MinimumWeightMatchingCentrosymmetry PROPERTIES OUTPUT_NAME "ovito_mwm_csp")
+
+# Make header files of this library available to dependent targets.
+TARGET_INCLUDE_DIRECTORIES(MinimumWeightMatchingCentrosymmetry INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+IF(NOT BUILD_SHARED_LIBS AND OVITO_BUILD_PYTHON_PACKAGE)
+	# Since we will link this library into the dynamically loaded Python extension module, we need to use the fPIC flag.
+	SET_PROPERTY(TARGET MinimumWeightMatchingCentrosymmetry PROPERTY POSITION_INDEPENDENT_CODE ON)
 ENDIF()
-IF(OVITO_BUILD_PLUGIN_STDOBJ OR OVITO_BUILD_PLUGIN_PARTICLES)
-    ADD_SUBDIRECTORY(muparser)
-ENDIF()
-IF(OVITO_BUILD_PLUGIN_PARTICLES)
-    ADD_SUBDIRECTORY(voro++)
-    ADD_SUBDIRECTORY(ptm)
-    ADD_SUBDIRECTORY(mwm_csp)
-ENDIF()
-IF(OVITO_BUILD_PLUGIN_PARTICLES)
-	ADD_SUBDIRECTORY(geogram)
-ENDIF()
-IF(OVITO_BUILD_PLUGIN_NETCDFPLUGIN OR OVITO_BUILD_PLUGIN_CRYSTALANALYSIS)
-    ADD_SUBDIRECTORY(netcdf_integration)
-ENDIF()
-IF(OVITO_BUILD_PLUGIN_CORRELATION)
-	ADD_SUBDIRECTORY(kissfft)
-ENDIF()
+
+# Export this target.
+INSTALL(TARGETS MinimumWeightMatchingCentrosymmetry EXPORT OVITO
+	RUNTIME DESTINATION "${OVITO_RELATIVE_LIBRARY_DIRECTORY}"
+	LIBRARY DESTINATION "${OVITO_RELATIVE_LIBRARY_DIRECTORY}"
+	ARCHIVE DESTINATION "${OVITO_RELATIVE_LIBRARY_DIRECTORY}" COMPONENT "development")

@@ -76,7 +76,7 @@ protected:
 	virtual Future<ComputeEnginePtr> createEngine(const PipelineEvaluationRequest& request, ModifierApplication* modApp, const PipelineFlowState& input) override;
 
 	/// Computes the centrosymmetry parameter of a single particle.
-	static FloatType computeCSP(NearestNeighborFinder& neighList, size_t particleIndex, int mode, bool normalize);
+	static FloatType computeCSP(NearestNeighborFinder& neighList, size_t particleIndex, int mode);
 
 private:
 
@@ -86,10 +86,9 @@ private:
 	public:
 
 		/// Constructor.
-		CentroSymmetryEngine(ParticleOrderingFingerprint fingerprint, ConstPropertyPtr positions, const SimulationCell& simCell, int nneighbors, int mode, bool normalize) :
+		CentroSymmetryEngine(ParticleOrderingFingerprint fingerprint, ConstPropertyPtr positions, const SimulationCell& simCell, int nneighbors, int mode) :
 			_nneighbors(nneighbors),
 			_mode(mode),
-			_normalize(normalize),
 			_positions(std::move(positions)),
 			_simCell(simCell),
 			_csp(ParticlesObject::OOClass().createStandardStorage(fingerprint.particleCount(), ParticlesObject::CentroSymmetryProperty, false)),
@@ -120,7 +119,6 @@ private:
 
 		const int _nneighbors;
         const int _mode;
-        const bool _normalize;
 		const SimulationCell _simCell;
 		ConstPropertyPtr _positions;
 		const PropertyPtr _csp;
@@ -135,9 +133,6 @@ private:
 
 	/// Controls how the CSP is performed.
 	DECLARE_MODIFIABLE_PROPERTY_FIELD_FLAGS(CSPMode, mode, setMode, PROPERTY_FIELD_MEMORIZE);
-
-	/// Specifies whether to normalize the CSP calculation
-	DECLARE_MODIFIABLE_PROPERTY_FIELD_FLAGS(bool, normalize, setNormalize, PROPERTY_FIELD_MEMORIZE);
 };
 
 }	// End of namespace
