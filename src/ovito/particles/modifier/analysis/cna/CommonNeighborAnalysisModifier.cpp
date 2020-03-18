@@ -140,11 +140,11 @@ void CommonNeighborAnalysisModifier::AdaptiveCNAEngine::perform()
 ******************************************************************************/
 void CommonNeighborAnalysisModifier::IntervalCNAEngine::perform()
 {
-	task()->setProgressText(tr("Performing interval common neighbor analysis"));
+	setProgressText(tr("Performing interval common neighbor analysis"));
 
 	// Prepare the neighbor list.
 	NearestNeighborFinder neighFinder(MAX_NEIGHBORS);
-	if(!neighFinder.prepare(positions(), cell(), selection(), task().get()))
+	if(!neighFinder.prepare(positions(), cell(), selection(), this))
 		return;
 
 	// Create output storage.
@@ -152,13 +152,13 @@ void CommonNeighborAnalysisModifier::IntervalCNAEngine::perform()
 
 	// Perform analysis on each particle.
 	if(!selection()) {
-		parallelFor(positions()->size(), *task(), [&](size_t index) {
+		parallelFor(positions()->size(), *this, [&](size_t index) {
 			output[index] = determineStructureInterval(neighFinder, index, typesToIdentify());
 		});
 	}
 	else {
 		ConstPropertyAccess<int> selectionData(selection());
-		parallelFor(positions()->size(), *task(), [&](size_t index) {
+		parallelFor(positions()->size(), *this, [&](size_t index) {
 			// Skip particles that are not included in the analysis.
 			if(selectionData[index])
 				output[index] = determineStructureInterval(neighFinder, index, typesToIdentify());
