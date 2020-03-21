@@ -74,7 +74,9 @@
       <listitem>
       <para>
       The conventional CSP algorithm performs well on highly centrosymmetric structures. In acentrosymmetric structures, however, it often assigns similar CSP values to very different structures, which results
-      from the "greedy" selection of neighbor pair weights. The <emphasis>Minimum-weight matching CSP</emphasis> ensures that neighbor relationships are reciprocal, which results in a better separation of CSP values
+      from the "greedy" selection of neighbor pair weights. The <emphasis>Minimum-weight matching CSP</emphasis>
+      [<link xlink:href="https://arxiv.org/abs/2003.08879">Larsen</link>]
+      ensures that neighbor relationships are reciprocal, which results in a better separation of CSP values
       between e.g. HCP atoms and surface defect atoms.
       </para>
 
