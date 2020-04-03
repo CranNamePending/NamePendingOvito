@@ -27,8 +27,8 @@
 #include "Application.h"
 
 // Called from Application::initialize() to register the embedded Qt resource files
-// when running a statically linked executable. Accordings to the Qt documentation this
-// needs to happen from oustide of any C++ namespace.
+// when running a statically linked executable. Following the Qt documentation, this
+// needs to be placed outside of any C++ namespace.
 static void registerQtResources()
 {
 #ifdef OVITO_BUILD_MONOLITHIC
