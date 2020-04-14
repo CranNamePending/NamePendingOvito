@@ -46,6 +46,8 @@ Modified for use in Minimum-weight matching CSP by PM Larsen.
 #define ODD 1
 #define UNLABELED 0
 
+#include "mwm_csp.h"
+
 class Matching
 {
 public:
@@ -702,7 +704,7 @@ double Matching::Solve(double *costmatrix, int (*res)[2],
 
 	int z = 0;
 	double obj = 0;
-	bool hit[n] = {0};
+	bool hit[MWM_CSP_MAX_POINTS] = {0};
 	for(int u = 0; u < n; u++)
 	{
 		if (hit[u])

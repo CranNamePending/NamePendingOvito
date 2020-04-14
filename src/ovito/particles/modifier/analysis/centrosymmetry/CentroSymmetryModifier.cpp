@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////
 //
-//  Copyright 2019 Alexander Stukowski
+//  Copyright 2020 Alexander Stukowski
 //
 //  This file is part of OVITO (Open Visualization Tool).
 //
@@ -73,6 +73,9 @@ Future<AsynchronousModifier::ComputeEnginePtr> CentroSymmetryModifier::createEng
 
 	if(numNeighbors() < 2)
 		throwException(tr("The number of neighbors to take into account in the centrosymmetry calculation is invalid. It must be at least 2."));
+
+	if(numNeighbors() > MAX_CSP_NEIGHBORS)
+		throwException(tr("The number of neighbors to take into account in the centrosymmetry calculation is too large. Maximum number of neighbors is %1.").arg(MAX_CSP_NEIGHBORS));
 
 	if(numNeighbors() % 2)
 		throwException(tr("The number of neighbors to take into account in the centrosymmetry calculation must be a positive and even integer."));
@@ -161,6 +164,9 @@ FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder,
 			P[i][2] = (double)v.z();
 		}
 		
+		// Make sure our own neighbor count limit is consistent with the limit defined in the mwm-csp module.
+		OVITO_STATIC_ASSERT(MAX_CSP_NEIGHBORS <= MWM_CSP_MAX_POINTS);
+
 		csp = (FloatType)calculate_mwm_csp(numNN, P);
 	}
 
