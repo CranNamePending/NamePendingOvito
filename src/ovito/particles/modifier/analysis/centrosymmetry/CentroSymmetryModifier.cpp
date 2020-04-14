@@ -130,7 +130,7 @@ void CentroSymmetryModifier::CentroSymmetryEngine::perform()
 /******************************************************************************
 * Computes the centrosymmetry parameter of a single particle.
 ******************************************************************************/
-FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder, size_t particleIndex, int mode)
+FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder, size_t particleIndex, CSPMode mode)
 {
 	// Find k nearest neighbor of current atom.
 	NearestNeighborFinder::Query<MAX_CSP_NEIGHBORS> neighQuery(neighFinder);
@@ -139,7 +139,7 @@ FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder,
 	int numNN = neighQuery.results().size();
 
 	FloatType csp = 0;
-	if (mode == CentroSymmetryModifier::ConventionalMode) {
+	if(mode == CentroSymmetryModifier::ConventionalMode) {
 		// R = Ri + Rj for each of npairs i,j pairs among numNN neighbors.
 		FloatType pairs[MAX_CSP_NEIGHBORS*MAX_CSP_NEIGHBORS/2];
 		FloatType* p = pairs;
@@ -156,16 +156,16 @@ FloatType CentroSymmetryModifier::computeCSP(NearestNeighborFinder& neighFinder,
 		csp = std::accumulate(pairs, pairs + (numNN/2), FloatType(0), std::plus<FloatType>());
 	}
 	else {
+		// Make sure our own neighbor count limit is consistent with the limit defined in the mwm-csp module.
+		OVITO_STATIC_ASSERT(MAX_CSP_NEIGHBORS <= MWM_CSP_MAX_POINTS);
+
 		double P[MAX_CSP_NEIGHBORS][3];
-		for(size_t i=0;i<numNN;i++) {
+		for(size_t i = 0; i < numNN; i++) {
 			auto v = neighQuery.results()[i].delta;
 			P[i][0] = (double)v.x();
 			P[i][1] = (double)v.y();
 			P[i][2] = (double)v.z();
 		}
-		
-		// Make sure our own neighbor count limit is consistent with the limit defined in the mwm-csp module.
-		OVITO_STATIC_ASSERT(MAX_CSP_NEIGHBORS <= MWM_CSP_MAX_POINTS);
 
 		csp = (FloatType)calculate_mwm_csp(numNN, P);
 	}

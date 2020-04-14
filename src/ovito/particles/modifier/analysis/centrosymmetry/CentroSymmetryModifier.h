@@ -76,7 +76,7 @@ protected:
 	virtual Future<ComputeEnginePtr> createEngine(const PipelineEvaluationRequest& request, ModifierApplication* modApp, const PipelineFlowState& input) override;
 
 	/// Computes the centrosymmetry parameter of a single particle.
-	static FloatType computeCSP(NearestNeighborFinder& neighList, size_t particleIndex, int mode);
+	static FloatType computeCSP(NearestNeighborFinder& neighList, size_t particleIndex, CSPMode mode);
 
 private:
 
@@ -86,7 +86,7 @@ private:
 	public:
 
 		/// Constructor.
-		CentroSymmetryEngine(ParticleOrderingFingerprint fingerprint, ConstPropertyPtr positions, const SimulationCell& simCell, int nneighbors, int mode) :
+		CentroSymmetryEngine(ParticleOrderingFingerprint fingerprint, ConstPropertyPtr positions, const SimulationCell& simCell, int nneighbors, CSPMode mode) :
 			_nneighbors(nneighbors),
 			_mode(mode),
 			_positions(std::move(positions)),
@@ -118,7 +118,7 @@ private:
 	private:
 
 		const int _nneighbors;
-        const int _mode;
+        const CSPMode _mode;
 		const SimulationCell _simCell;
 		ConstPropertyPtr _positions;
 		const PropertyPtr _csp;
