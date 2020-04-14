@@ -41,7 +41,6 @@ Modified for use in Minimum-weight matching CSP by PM Larsen.
 #define MIN(A, B) (LESS((A),(B)) ? (A) : (B))
 #define MAX(A, B) (LESS((A),(B)) ? (B) : (A))
 
-
 #define EVEN 2
 #define ODD 1
 #define UNLABELED 0
@@ -133,7 +132,7 @@ static bool IsEdgeBlocked(std::vector<double>& slack, int n, int u, int v)
 //Returns true if u and v are adjacent in G and not blocked
 static bool IsAdjacent(std::vector<double>& slack, int n, int u, int v)
 {
-	return (u != v and not IsEdgeBlocked(slack, n, u, v));
+	return (u != v && ! IsEdgeBlocked(slack, n, u, v));
 }
 
 static void AddFreeBlossomIndex(std::vector<int>& free, int i)
@@ -261,12 +260,12 @@ static void Heuristic(int n, std::vector< double >& slack, std::vector<int>& mat
 			{
 				if (u == v) continue;
 
-				if(IsEdgeBlocked(slack, n, u, v) or
-					(outer[u] == outer[v]) or
+				if(IsEdgeBlocked(slack, n, u, v) ||
+					(outer[u] == outer[v]) ||
 					(mate[outer[v]] != -1) )
 					continue;
 
-				if(min == -1 or degree[v] < degree[min])
+				if(min == -1 || degree[v] < degree[min])
 					min = v;	
 			}
 			if(min != -1)
@@ -281,7 +280,7 @@ static void Heuristic(int n, std::vector< double >& slack, std::vector<int>& mat
 //Destroys a blossom recursively
 void Matching::DestroyBlossom(int t, std::vector<int>& free, std::vector<bool>& blocked, std::vector<double>& dual, std::vector<bool>& active, std::vector<int>& mate, std::vector<int>& outer)
 {
-	if((t < n) or (blocked[t] and GREATER(dual[t], 0)))
+	if((t < n) || (blocked[t] && GREATER(dual[t], 0)))
 		return;
 
 	for(std::list<int>::iterator it = shallow[t].begin(); it != shallow[t].end(); it++)
@@ -314,7 +313,7 @@ void Matching::Expand(int u, std::vector<int>& free, std::vector<bool>& blocked,
 		for(std::vector<int>::iterator jt = deep[v].begin(); jt != deep[v].end(); jt++)
 		{
 			int dj = *jt;
-			if(IsAdjacent(slack, n, di, dj) and GetEdgeIndex(n, di, dj) < index)
+			if(IsAdjacent(slack, n, di, dj) && GetEdgeIndex(n, di, dj) < index)
 			{
 				index = GetEdgeIndex(n, di, dj);
 				p = di;
@@ -326,20 +325,20 @@ void Matching::Expand(int u, std::vector<int>& free, std::vector<bool>& blocked,
 	mate[u] = q;
 	mate[v] = p;
 	//If u is a regular vertex, we are done
-	if(u < n or (blocked[u] and not expandBlocked)) return;
+	if(u < n || (blocked[u] && ! expandBlocked)) return;
 
 	bool found = false;
 	//Find the position t of the new tip of the blossom
-	for(std::list<int>::iterator it = shallow[u].begin(); it != shallow[u].end() and not found; )
+	for(std::list<int>::iterator it = shallow[u].begin(); it != shallow[u].end() && ! found; )
 	{
 		int si = *it;
-		for(std::vector<int>::iterator jt = deep[si].begin(); jt != deep[si].end() and not found; jt++)
+		for(std::vector<int>::iterator jt = deep[si].begin(); jt != deep[si].end() && ! found; jt++)
 		{
 			if(*jt == p )
 				found = true;
 		}
 		it++;
-		if(not found)
+		if(! found)
 		{
 			shallow[u].push_back(si);
 			shallow[u].pop_front();
@@ -435,7 +434,7 @@ void Matching::Reset(	std::vector<int>& free,
 		forest[i] = -1;
 		root[i] = i;
 
-		if(i >= n and active[i] and outer[i] == i)
+		if(i >= n && active[i] && outer[i] == i)
 			DestroyBlossom(i, free, blocked, dual, active, mate, outer);
 	}
 
@@ -479,7 +478,7 @@ int Matching::Blossom(int u, int v,
 	}
 
 	int v_ = outer[v];
-	while(not isInPath[v_])
+	while(! isInPath[v_])
 		v_ = outer[forest[v_]];
 	tip[t] = v_;
 
@@ -548,17 +547,17 @@ void Matching::UpdateDualCosts(	std::vector<int>& free,
 		{
 			int i = GetEdgeIndex(n, u, v);
 
-			if( (type[outer[u]] == EVEN and type[outer[v]] == UNLABELED) or (type[outer[v]] == EVEN and type[outer[u]] == UNLABELED) )
+			if( (type[outer[u]] == EVEN && type[outer[v]] == UNLABELED) || (type[outer[v]] == EVEN && type[outer[u]] == UNLABELED) )
 			{
-				if(!inite1 or GREATER(e1, slack[i]))
+				if(!inite1 || GREATER(e1, slack[i]))
 				{
 					e1 = slack[i];
 					inite1 = true;
 				}
 			}
-			else if( (outer[u] != outer[v]) and type[outer[u]] == EVEN and type[outer[v]] == EVEN )
+			else if( (outer[u] != outer[v]) && type[outer[u]] == EVEN && type[outer[v]] == EVEN )
 			{
-				if(!inite2 or GREATER(e2, slack[i]))
+				if(!inite2 || GREATER(e2, slack[i]))
 				{
 					e2 = slack[i];
 					inite2 = true;
@@ -569,7 +568,7 @@ void Matching::UpdateDualCosts(	std::vector<int>& free,
 
 	for(int i = n; i < 2*n; i++)
 	{
-		if(active[i] and i == outer[i] and type[outer[i]] == ODD and (!inite3 or GREATER(e3, dual[i])))
+		if(active[i] && i == outer[i] && type[outer[i]] == ODD && (!inite3 || GREATER(e3, dual[i])))
 		{
 			e3 = dual[i]; 
 			inite3 = true;
@@ -580,20 +579,20 @@ void Matching::UpdateDualCosts(	std::vector<int>& free,
 	else if(inite2) e = e2;
 	else if(inite3) e = e3;
 
-	if(GREATER(e, e2/2.0) and inite2)
+	if(GREATER(e, e2/2.0) && inite2)
 		e = e2/2.0;
-	if(GREATER(e, e3) and inite3)
+	if(GREATER(e, e3) && inite3)
 		e = e3;
 	 
 	for(int i = 0; i < 2*n; i++)
 	{
 		if(i != outer[i]) continue;
 
-		if(active[i] and type[outer[i]] == EVEN)	
+		if(active[i] && type[outer[i]] == EVEN)	
 		{
 			dual[i] += e; 
 		}
-		else if(active[i] and type[outer[i]] == ODD)
+		else if(active[i] && type[outer[i]] == ODD)
 		{
 			dual[i] -= e; 
 		}
@@ -607,13 +606,13 @@ void Matching::UpdateDualCosts(	std::vector<int>& free,
 
 			if (outer[u] != outer[v])
 			{	
-				if(type[outer[u]] == EVEN and type[outer[v]] == EVEN)
+				if(type[outer[u]] == EVEN && type[outer[v]] == EVEN)
 					slack[i] -= 2.0*e;
-				else if(type[outer[u]] == ODD and type[outer[v]] == ODD)
+				else if(type[outer[u]] == ODD && type[outer[v]] == ODD)
 					slack[i] += 2.0*e;
-				else if( (type[outer[v]] == UNLABELED and type[outer[u]] == EVEN) or (type[outer[u]] == UNLABELED and type[outer[v]] == EVEN) )
+				else if( (type[outer[v]] == UNLABELED && type[outer[u]] == EVEN) || (type[outer[u]] == UNLABELED && type[outer[v]] == EVEN) )
 					slack[i] -= e;
-				else if( (type[outer[v]] == UNLABELED and type[outer[u]] == ODD) or (type[outer[u]] == UNLABELED and type[outer[v]] == ODD) )
+				else if( (type[outer[v]] == UNLABELED && type[outer[u]] == ODD) || (type[outer[u]] == UNLABELED && type[outer[v]] == ODD) )
 					slack[i] += e;
 			}
 		}
@@ -625,7 +624,7 @@ void Matching::UpdateDualCosts(	std::vector<int>& free,
 		{
 			blocked[i] = true;
 		}
-		else if(active[i] and blocked[i])
+		else if(active[i] && blocked[i])
 		{
 			//The blossom is becoming unblocked
 			if(mate[i] == -1)
@@ -684,7 +683,7 @@ double Matching::Solve(double *costmatrix, int (*res)[2],
 
 	//If the matching on the compressed graph is perfect, we are done
 	bool perfect = false;
-	while(not perfect)
+	while(! perfect)
 	{
 		//Run an heuristic maximum matching algorithm
 		Heuristic(n, slack, mate, outer);
@@ -699,7 +698,7 @@ double Matching::Solve(double *costmatrix, int (*res)[2],
 
 	//-------- retrieve matching --------
 	for(int i = 0; i < 2*n; i++)
-		if(active[i] and mate[i] != -1 and outer[i] == i)
+		if(active[i] && mate[i] != -1 && outer[i] == i)
 			Expand(i, free, blocked, slack, outer, active, mate, true);
 
 	int z = 0;
