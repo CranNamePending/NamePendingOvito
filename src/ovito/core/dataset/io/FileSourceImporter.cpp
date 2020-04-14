@@ -49,6 +49,9 @@ void FileSourceImporter::propertyChanged(const PropertyFieldDescriptor& field)
 	if(field == PROPERTY_FIELD(isMultiTimestepFile)) {
 		// Automatically rescan input file for animation frames when this option has been changed.
 		requestFramesUpdate();
+
+		// Also update the UI explicitly, because target-changed messages are supressed for this property field.
+		Q_EMIT isMultiTimestepFileChanged();
 	}
 }
 

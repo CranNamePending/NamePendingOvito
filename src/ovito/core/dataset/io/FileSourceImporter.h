@@ -238,6 +238,11 @@ public:
 	/// Creates an asynchronous frame discovery object that scans a file for contained animation frames.
 	virtual FrameFinderPtr createFrameFinder(const FileHandle& file) { return {}; }
 
+Q_SIGNALS:
+
+	/// This signal is emitted by the importer when the value of its isMultiTimestepFile property field changes.
+	void isMultiTimestepFileChanged();
+
 protected:
 
 	/// \brief Is called when the value of a property of this object has changed.
