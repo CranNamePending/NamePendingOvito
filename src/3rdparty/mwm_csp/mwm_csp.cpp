@@ -86,7 +86,7 @@ double _calculate_mwm_csp(int num_points, double (*P)[3])
 	if (matching)
 		return lower_bound;
 
-	int res[num_points][2];
+	int res[MWM_CSP_MAX_POINTS][2];
 	return MinimumCostPerfectMatching(num_points, weights, res);
 }
 
