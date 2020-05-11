@@ -22,13 +22,20 @@
 
 #pragma once
 
+#include <ospray/ospray_cpp/ManagedObject.h>
 
 #include <ovito/core/Core.h>
 #include <ovito/core/rendering/noninteractive/NonInteractiveSceneRenderer.h>
+#include <ospray/ospray_cpp/Group.h>
+#include <ospray/ospray_cpp/Instance.h>
+#include <ospray/ospray_cpp/World.h>
+#include <ospray/ospray_cpp/Data.h>
+#include <ospray/ospray_cpp/Geometry.h>
+#include <ospray/ospray_cpp/GeometricModel.h>
 #include "OSPRayBackend.h"
 
 namespace ospray { namespace cpp {
-	class Model;
+	//class Model;
 	class Renderer;
 	class Material;
 }};
@@ -47,11 +54,12 @@ public:
 	OSPReferenceWrapper& operator=(const OSPReferenceWrapper& other) = delete;
 	OSPReferenceWrapper& operator=(OSPReferenceWrapper&& other) = default;
 	OSPType& operator=(const OSPType& other) {
-		this->release();
+	    //ospRelease(this); /* TODO check memory leak ??
+//		this->release();
 		OSPType::operator=(other);
 		return *this;
 	}
-	~OSPReferenceWrapper() { this->release(); }
+	~OSPReferenceWrapper() {  /*ospRelease(this); /*this->release();*/ }
 };
 
 /**
@@ -154,13 +162,21 @@ private:
 	std::vector<std::tuple<QString,ColorA,QFont,Point2,int>> _textDrawCalls;
 
 	/// Pointer to the OSPRay model.
-	OSPReferenceWrapper<ospray::cpp::Model>* _ospWorld = nullptr;
+	//OSPReferenceWrapper<ospray::cpp::Model>* _ospGroup = nullptr;
+    osp::Group *_ospGroup = nullptr;
 
 	/// Pointer to the OSPRay renderer.
-	OSPReferenceWrapper<ospray::cpp::Renderer>* _ospRenderer = nullptr;
+    osp::Renderer *_ospRenderer = nullptr;
 
 	/// Pointer to the OSPRay standard material.
-	OSPReferenceWrapper<ospray::cpp::Material>* _ospMaterial = nullptr;
+	//OSPReferenceWrapper<ospray::cpp::Material>* _ospMaterial = nullptr;
+    osp::Material *_ospMaterial = nullptr;
+
+    osp::Instance *_ospInstance= nullptr;
+
+    osp::World *_ospWorld = nullptr;
+
+    std::vector<ospray::cpp::GeometricModel> geometricModels;
 };
 
 }	// End of namespace

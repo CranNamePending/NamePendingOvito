@@ -35,11 +35,12 @@
 
 #include <ospray/ospray_cpp.h>
 #include <ospray/version.h>
-#if QT_VERSION_CHECK(OSPRAY_VERSION_MAJOR, OSPRAY_VERSION_MINOR, OSPRAY_VERSION_PATCH) < QT_VERSION_CHECK(1,8,0)
-	#error "OVITO requires OSPRay version 1.8.0 or newer."
+#if QT_VERSION_CHECK(OSPRAY_VERSION_MAJOR, OSPRAY_VERSION_MINOR, OSPRAY_VERSION_PATCH) < QT_VERSION_CHECK(2,1,0)
+	#error "OVITO requires OSPRay version 2.1.0 or newer."
 #endif
 #include <render/LoadBalancer.h>
 #include <ospcommon/tasking/parallel_for.h>
+//#include <QtGui/qopengles2ext.h>
 
 namespace Ovito { namespace OSPRay {
 
@@ -127,24 +128,37 @@ bool OSPRayRenderer::startRender(DataSet* dataset, RenderSettings* settings)
 {
 	if(!NonInteractiveSceneRenderer::startRender(dataset, settings))
 		return false;
-
+//TODO modify this !
 	// Create OSPRay device if not created yet.
+	ospInit(0, nullptr);
 	OSPDevice device = ospGetCurrentDevice();
+	//OSPDevice device = ospGetCurrentDevice();
 	if(!device) {
-		device = ospNewDevice();
-
+		device = ospNewDevice("cpu");
+        ospDeviceCommit(device);
 		// Load our extension module for OSPRay, which provides raytracing functions
 		// for various geometry primitives (discs, cones, quadrics) needed by OVITO.
 		if(ospLoadModule("ovito") != OSP_NO_ERROR)
 			throwException(tr("Failed to load OSPRay extension module for Ovito: %1").arg(ospDeviceGetLastErrorMsg(device)));
-
+        throwException(tr("Module Loaded : %1").arg(ospDeviceGetLastErrorMsg(device)));
 		// Use only the number of parallel rendering threads allowed by the user.
-		ospDeviceSet1i(device, "numThreads", Application::instance()->idealThreadCount());
+		//ospDeviceSet1i(device, "numThreads", Application::instance()->idealThreadCount());
+		int numThreadsPtr = Application::instance()->idealThreadCount();
+        ospDeviceSetParam(device, "numThreads", OSP_INT,
+                          static_cast<const void *>(&numThreadsPtr));
+
 		ospDeviceCommit(device);
+        ospDeviceGetProperty(device, OSP_DEVICE_VERSION);
 
 		// Activate OSPRay device.
 		ospSetCurrentDevice(device);
+		//printf("Defined First Time");
 	}
+	else {
+        if(ospLoadModule("ovito") != OSP_NO_ERROR)
+            throwException(tr("Failed to load OSPRay extension module for Ovito: %1").arg(ospDeviceGetLastErrorMsg(device)));
+        //printf("already defined");
+    }
 
 	return true;
 }
@@ -161,7 +175,7 @@ bool OSPRayRenderer::renderFrame(FrameBuffer* frameBuffer, StereoRenderingTask s
 	try {
 
 		// Output image size:
-		ospcommon::vec2i imgSize;
+		ospcommon::math::vec2i imgSize;
 		imgSize.x = renderSettings()->outputImageWidth();
 		imgSize.y = renderSettings()->outputImageHeight();
 
@@ -194,78 +208,152 @@ bool OSPRayRenderer::renderFrame(FrameBuffer* frameBuffer, StereoRenderingTask s
 		}
 
 		// Create and set up OSPRay camera
-		OSPReferenceWrapper<ospray::cpp::Camera> camera(projParams().isPerspective ? "perspective" : "orthographic");
-		camera.set("aspect", imgSize.x / (float)imgSize.y);
-		camera.set("pos", cam_pos.x(), cam_pos.y(), cam_pos.z());
-		camera.set("dir", cam_dir.x(), cam_dir.y(), cam_dir.z());
-		camera.set("up",  cam_up.x(), cam_up.y(), cam_up.z());
-		camera.set("nearClip",  projParams().znear);
+
+		//OSPReferenceWrapper<ospray::cpp::Camera> camera(projParams().isPerspective ? "perspective" : "orthographic");
+		auto camera = ospNewCamera(projParams().isPerspective ? "perspective" : "orthographic");
+		//OSPReferenceWrapper<osp::Camera> camera(projParams().isPerspective ? "perspective" : "orthographic");
+		ospSetFloat(camera,"aspect",imgSize.x / (float)imgSize.y);
+		ospSetParam(camera,"position",OSP_VEC3F, (ospray::vec3f){(float) cam_pos.x(), (float) cam_pos.y(), (float) cam_pos.z()});
+		ospSetParam(camera,"direction",OSP_VEC3F, (ospray::vec3f){(float) cam_dir.x(), (float) cam_dir.y(), (float) cam_dir.z()});
+		ospSetParam(camera,"up",OSP_VEC3F, (ospray::vec3f){(float) cam_up.x(), (float) cam_up.y(), (float) cam_up.z()});
+		//camera.setParam("direction", (ospray::vec3f){(float) cam_dir.x(), (float) cam_dir.y(), (float) cam_dir.z()});
+		//camera.setParam("up", (ospray::vec3f){(float) cam_up.x(), (float) cam_up.y(), (float) cam_up.z()});
+		ospSetFloat(camera,"nearClip",  projParams().znear);
 		if(projParams().isPerspective)
-			camera.set("fovy", qRadiansToDegrees(projParams().fieldOfView));
+			ospSetFloat(camera,"fovy", qRadiansToDegrees(projParams().fieldOfView));
 		else
-			camera.set("height", projParams().fieldOfView * 2);
+			ospSetFloat(camera,"height", projParams().fieldOfView * 2);
 		if(projParams().isPerspective && depthOfFieldEnabled() && dofFocalLength() > 0 && dofAperture() > 0) {
-			camera.set("apertureRadius", dofAperture());
-			camera.set("focusDistance", dofFocalLength());
+			ospSetFloat(camera,"apertureRadius", dofAperture());
+			ospSetFloat(camera, "focusDistance", dofFocalLength());
 		}
-		camera.commit();
+        ospCommit(camera);
 
 		// Create OSPRay renderer
-		OSPReferenceWrapper<ospray::cpp::Renderer> renderer{backend()->createOSPRenderer(renderSettings()->backgroundColor())};
-		_ospRenderer = &renderer;
+		//OSPReferenceWrapper<ospray::cpp::Renderer> renderer{backend()->createOSPRenderer(renderSettings()->backgroundColor())};
+		auto renderer = backend()->createOSPRenderer(renderSettings()->backgroundColor());
+		_ospRenderer = renderer;
 
 		// Create standard material.
-		OSPReferenceWrapper<ospray::cpp::Material> material{backend()->createOSPMaterial("OBJMaterial")};
-		material.set("Ns", materialShininess());
-		material.set("Ks", materialSpecularBrightness(), materialSpecularBrightness(), materialSpecularBrightness());
-		material.commit();
-		_ospMaterial = &material;
+		//OSPReferenceWrapper<ospray::cpp::Material> material{backend()->createOSPMaterial("OBJMaterial")};
+		OSPMaterial material = backend()->createOSPMaterial("obj");
+		ospSetFloat(material,"Ns", materialShininess());
+		//material.setParam("Ks", ospray::vec3f {(float) materialSpecularBrightness(),(float) materialSpecularBrightness(),(float) materialSpecularBrightness()});
+		ospSetParam(camera, "Ks", OSP_VEC3F, ospray::vec3f {(float) materialSpecularBrightness(),(float) materialSpecularBrightness(),(float) materialSpecularBrightness()});
+		//material.commit();
+		ospCommit(material);
+		_ospMaterial = material;
 
-		// Transfer renderable geometry from OVITO to OSPRay renderer.
-		OSPReferenceWrapper<ospray::cpp::Model> world;
-		_ospWorld = &world;
+		// // Transfer renderable geometry from OVITO to OSPRay renderer.
+		//Create the scene hierarchy for rendering
+		//OSPReferenceWrapper<ospray::cpp::Group> group;
+		auto group = ospNewGroup();
+        _ospGroup = group;
+
+
 		if(!renderScene(operation.subOperation()))
 			return false;
-		world.commit();
+		//group.commit();
+
+
+        // Create list of all instances.
+        /*std::vector<OSPGeometricModel> geometricModelHandles (geometricModels.size());
+        //ospray::cpp::Data lights(lightHandles.size(), OSP_LIGHT, lightHandles.data());
+        for(size_t i = 0; i < geometricModels.size(); i++) {
+            geometricModelHandles[i] = geometricModels[i].handle();
+        }*/
+        //ospray::cpp::Data geometricModelsData (geometricModelHandles.size(), OSP_GEOMETRIC_MODEL, geometricModelHandles.data());
+        auto geometricModelsData = ospNewSharedData1D(geometricModels.data(),OSP_GEOMETRIC_MODEL, geometricModels.size());//TODO check when empty
+        ospCommit(geometricModelsData);
+        //group->setParam("geometry",geometricModelsData);
+        //ospSetParam(group,"geometry",OSP_GEOMETRIC_MODEL,geometricModelsData);
+        //ospSetParam(group,"geometry",OSP_GEOMETRIC_MODEL,geometricModels.data());
+        ospSetObject(group,"geometry",geometricModelsData);
+        ospCommit(group);
+
+        //OSPReferenceWrapper<ospray::cpp::Instance> instance (group);
+        auto instance = ospNewInstance(group);
+        _ospInstance = instance;
+        //OSPReferenceWrapper<ospray::cpp::World> world;
+        auto world = ospNewWorld();
+        _ospWorld = world;
 
 		// Create direct light.
-		std::vector<OSPReferenceWrapper<ospray::cpp::Light>> lightSources;
+		//std::vector<OSPReferenceWrapper<ospray::cpp::Light>> lightSources;
+		std::vector<OSPLight > lightSources;
 		if(directLightSourceEnabled()) {
-			OSPReferenceWrapper<ospray::cpp::Light> light{backend()->createOSPLight("distant")};
+			OSPLight light{backend()->createOSPLight("distant")};
 			Vector3 lightDir = projParams().inverseViewMatrix * Vector3(0.2f,-0.2f,-1.0f);
-			light.set("direction", lightDir.x(), lightDir.y(), lightDir.z());
-			light.set("intensity", defaultLightSourceIntensity());
-			light.set("isVisible", false);
-			light.set("angularDiameter", qRadiansToDegrees(defaultLightSourceAngularDiameter()));
+			ospSetParam(light,"direction",OSP_VEC3F, ospray::vec3f {(float) lightDir.x(), (float)  lightDir.y(), (float)  lightDir.z()});
+			ospSetFloat(light,"intensity", defaultLightSourceIntensity());
+			ospSetBool(light,"visible", false);
+			ospSetFloat(light,"angularDiameter", qRadiansToDegrees(defaultLightSourceAngularDiameter()));
 			lightSources.push_back(std::move(light));
 		}
 
 		// Create and setup ambient light source.
 		if(ambientLightEnabled()) {
-			OSPReferenceWrapper<ospray::cpp::Light> light{backend()->createOSPLight("ambient")};
-			light.set("intensity", ambientBrightness());
+            OSPLight light{backend()->createOSPLight("ambient")};
+			ospSetFloat(light,"intensity", ambientBrightness());
 			lightSources.push_back(std::move(light));
 		}
 
 		// Create list of all light sources.
-		std::vector<OSPLight> lightHandles(lightSources.size());
+		//std::vector<OSPLight> lightHandles(lightSources.size());
 		for(size_t i = 0; i < lightSources.size(); i++) {
-			lightSources[i].commit();
-			lightHandles[i] = lightSources[i].handle();
+		    ospCommit(lightSources[i]);
+            //lightHandles[i] = lightSources[i].handle();
 		}
-		OSPReferenceWrapper<ospray::cpp::Data> lights(lightHandles.size(), OSP_LIGHT, lightHandles.data());
-		lights.commit();
+		//OSPReferenceWrapper<ospray::cpp::Data> lights(lightHandles.size(), OSP_LIGHT, lightHandles.data());
+		//ospray::cpp::Data lights(lightHandles.size(), OSP_LIGHT, lightHandles.data());
+		//auto lights = ospNewSharedData1D(lightHandles.data(),OSP_LIGHT,lightHandles.size());
+		auto lights = ospNewSharedData1D(lightSources.data(),OSP_LIGHT,lightSources.size());
+		//lights.commit();
+		ospCommit(lights);
 
-		renderer.set("model",  world);
-		renderer.set("camera", camera);
-		renderer.set("lights", lights);
-		renderer.set("spp", std::max(samplesPerPixel(), 1));
-		renderer.set("maxDepth", std::max(maxRayRecursion(), 1));
-		renderer.commit();
+        // Create list of all instances.
+        std::vector<OSPInstance > instancesHandles(1); //TODO ? For now we only have one instance
+        /*for(size_t i = 0; i < instancesHandles.size(); i++) {
+            lightSources[i].commit();
+            lightHandles[i] = lightSources[i].handle();
+        }*/
+        ospCommit(instance);
+        //instancesHandles[0] = instance.handle();
+        instancesHandles[0] = instance;
+
+        //ospray::cpp::Data instances(instancesHandles.size(), OSP_INSTANCE, instancesHandles.data());
+        auto instances = ospNewSharedData1D(instancesHandles.data(), OSP_INSTANCE, instancesHandles.size());
+        ospCommit(instances);
+        //instances.commit();
+
+        //ospSetParam(world,"light",OSP_DATA,lights);
+        ospSetObject(world,"light",lights);
+        //ospSetParam(world,"instance",OSP_DATA,instances);
+        ospSetObject(world,"instance",instances);
+        //world.setParam("light",lights);
+        //world.setParam("instance",instances);
+
+		//renderer.setParam("model",  world);
+		//renderer.setParam("camera", camera);
+		//renderer.setParam("lights", lights);
+		ospSetInt(renderer, "pixelSamples", std::max(samplesPerPixel(), 1));
+		ospSetInt(renderer, "maxPathLength", std::max(maxRayRecursion(), 1));
+		ospCommit(renderer);
+		//renderer.setParam("maxPathLength", std::max(maxRayRecursion(), 1));
+		//renderer.commit();
+
+		ospCommit(instance);
+		ospCommit(world);
+        //instance.commit();
+        //world.commit();
 
 		// Create and set up OSPRay framebuffer.
-		OSPReferenceWrapper<ospray::cpp::FrameBuffer> osp_fb(imgSize, OSP_FB_SRGBA, OSP_FB_COLOR | OSP_FB_ACCUM);
-		osp_fb.clear(OSP_FB_COLOR | OSP_FB_ACCUM);
+		//OSPReferenceWrapper<ospray::cpp::FrameBuffer> osp_fb(imgSize, OSP_FB_SRGBA, OSP_FB_COLOR | OSP_FB_ACCUM);
+		auto osp_fb = ospNewFrameBuffer(imgSize.x,imgSize.y,OSP_FB_SRGBA,OSP_FB_COLOR | OSP_FB_ACCUM);
+		//osp_fb.clear(OSP_FB_COLOR| OSP_FB_ACCUM);
+        ospResetAccumulation(osp_fb);
+		//osp_fb.clear();
+
 
 		// Define a custom load balancer for OSPRay that performs progressive updates of the frame buffer.
 		class OVITOTiledLoadBalancer : public ospray::TiledLoadBalancer
@@ -275,8 +363,8 @@ bool OSPRayRenderer::renderFrame(FrameBuffer* frameBuffer, StereoRenderingTask s
 				_progressCallback = std::move(progressCallback);
 			}
 
-			float renderFrame(ospray::Renderer *renderer, ospray::FrameBuffer *fb, const ospray::uint32 channelFlags) override {
-				void *perFrameData = renderer->beginFrame(fb);
+            void  renderFrame(ospray::FrameBuffer *fb, ospray::Renderer *renderer, ospray::Camera *camera, ospray::World *world) override {
+				void *perFrameData = renderer->beginFrame(fb,world);
 				int tileCount = fb->getTotalTiles();
 				for(int taskIndex = 0; taskIndex < tileCount; taskIndex++) {
 					const size_t numTiles_x = fb->getNumTiles().x;
@@ -294,21 +382,22 @@ bool OSPRayRenderer::renderFrame(FrameBuffer* frameBuffer, StereoRenderingTask s
 					auto tilePtr = std::make_unique<ospray::Tile>(tileID, fb->size, accumID);
 					auto &tile   = *tilePtr;
 #else
-					ospray::Tile __aligned(64) tile(tileID, fb->size, accumID);
+//					ospray::Tile __aligned(64) tile(tileID, fb->size, accumID);
+					ospray::Tile __aligned(64) tile(tileID, fb->getNumPixels(), accumID);
 #endif
 					ospray::tasking::parallel_for(numJobs(renderer->spp, accumID), [&](size_t tIdx) {
-						renderer->renderTile(perFrameData, tile, tIdx);
+						renderer->renderTile(fb,camera,world,perFrameData, tile, tIdx);
 					});
 					fb->setTile(tile);
-
+//TODO CHECK HERE FOR PROGRESS CALLBACK
 					if(_progressCallback) {
 						if(!_progressCallback(tile.region.lower.x,tile.region.lower.y,tile.region.upper.x,tile.region.upper.y))
 							break;
 					}
 				}
 
-				renderer->endFrame(perFrameData,channelFlags);
-				return fb->endFrame(renderer->errorThreshold);
+				renderer->endFrame(fb,perFrameData);
+				return fb->endFrame(renderer->errorThreshold,camera);
 			}
 			std::string toString() const override {
 				return "OVITOTiledLoadBalancer";
@@ -319,7 +408,8 @@ bool OSPRayRenderer::renderFrame(FrameBuffer* frameBuffer, StereoRenderingTask s
 		auto loadBalancer = std::make_unique<OVITOTiledLoadBalancer>();
 		loadBalancer->setProgressCallback([&osp_fb,frameBuffer,&frameBufferContents,imgSize,&operation,this](int x1, int y1, int x2, int y2) {
 			// Access framebuffer data and copy it to our own framebuffer.
-			uchar* fb = (uchar*)osp_fb.map(OSP_FB_COLOR);
+			//uchar* fb = (uchar*)osp_fb.map(OSP_FB_COLOR);
+			uchar* fb = (uchar*)ospMapFrameBuffer(osp_fb,OSP_FB_COLOR);
 			OVITO_ASSERT(frameBufferContents.format() == QImage::Format_ARGB32);
 			int bperline = renderSettings()->outputImageWidth() * 4;
 			for(int y = y1; y < y2; y++) {
@@ -340,8 +430,12 @@ bool OSPRayRenderer::renderFrame(FrameBuffer* frameBuffer, StereoRenderingTask s
 				}
 			}
 			frameBuffer->update(QRect(x1, frameBuffer->image().height() - y2, x2 - x1, y2 - y1));
-			osp_fb.unmap(fb);
-			return operation.incrementProgressValue((x2-x1) * (y2-y1));
+			//osp_fb.unmap(fb);
+            ospUnmapFrameBuffer(fb,osp_fb);
+            if(QCoreApplication::instance() && (QCoreApplication::instance()->thread() == QThread::currentThread())){
+                return operation.incrementProgressValue((x2-x1) * (y2-y1));
+            }
+            return (false);
 		});
 		ospray::TiledLoadBalancer::instance = std::move(loadBalancer);
 
@@ -350,7 +444,10 @@ bool OSPRayRenderer::renderFrame(FrameBuffer* frameBuffer, StereoRenderingTask s
 			if(iteration != 0) operation.nextProgressSubStep();
 			operation.setProgressText(tr("Rendering image (pass %1 of %2)").arg(iteration+1).arg(refinementIterations()));
 			operation.setProgressMaximum(imgSize.x * imgSize.y);
-			renderer.renderFrame(osp_fb, OSP_FB_COLOR | OSP_FB_ACCUM);
+			//OSPRenderer Renderer r;
+			//osp_fb.renderFrame(renderer,camera,world);
+			ospRenderFrame(osp_fb,renderer,camera,world);
+			//renderer.renderFrame(osp_fb, OSP_FB_COLOR | OSP_FB_ACCUM);
 		}
 		operation.endProgressSubSteps();
 
@@ -413,48 +510,78 @@ void OSPRayRenderer::renderParticles(const DefaultParticlePrimitive& particleBuf
 	if(particleBuffer.particleShape() == ParticlePrimitive::SphericalShape) {
 
 		// Compile buffer with sphere data in OSPRay format.
-		std::vector<ospcommon::vec4f> sphereData(particleBuffer.positions().size());
-		std::vector<ospcommon::vec4f> colorData(particleBuffer.positions().size());
-		auto sphereIter = sphereData.begin();
+		std::vector<ospray::vec3f> spherePosition(particleBuffer.positions().size());
+		std::vector<float> sphereRadius(particleBuffer.positions().size());
+		std::vector<ospray::vec4f> colorData(particleBuffer.positions().size());
+		auto spherePosIter = spherePosition.begin();
+		auto sphereRadiusIter = sphereRadius.begin();
 		auto colorIter = colorData.begin();
 		for(; p != p_end; ++p, ++c, ++r) {
 			Point3 tp = tm * (*p);
-			(*sphereIter)[0] = tp.x();
-			(*sphereIter)[1] = tp.y();
-			(*sphereIter)[2] = tp.z();
-			(*sphereIter)[3] = *r;
+			(*spherePosIter)[0] = tp.x();
+			(*spherePosIter)[1] = tp.y();
+			(*spherePosIter)[2] = tp.z();
+			(*sphereRadiusIter) = *r;
 			(*colorIter)[0] = qBound(0.0f, (float)c->r(), 1.0f);
 			(*colorIter)[1] = qBound(0.0f, (float)c->g(), 1.0f);
 			(*colorIter)[2] = qBound(0.0f, (float)c->b(), 1.0f);
 			(*colorIter)[3] = qBound(0.0f, (float)c->a(), 1.0f);
-			++sphereIter;
+			++spherePosIter;
+			++sphereRadiusIter;
 			++colorIter;
 		}
-		size_t nspheres = sphereData.size();
+		size_t nspheres = spherePosition.size();
 
-		OSPReferenceWrapper<ospray::cpp::Geometry> spheres("spheres");
-		spheres.set("bytes_per_sphere", (int)sizeof(ospcommon::vec4f));
-		spheres.set("offset_radius", (int)sizeof(float) * 3);
+		auto spheres = ospNewGeometry("sphere");
+		//spheres.setParam("bytes_per_sphere", (int)sizeof(ospray::vec4f));
+		//spheres.setParam("offset_radius", (int)sizeof(float) * 3);
 
-		OSPReferenceWrapper<ospray::cpp::Data> data(nspheres, OSP_FLOAT4, sphereData.data());
-		data.commit();
-		spheres.set("spheres", data);
+		//OSPReferenceWrapper<ospray::cpp::Data> data(nspheres, OSP_VEC4F, sphereData.data());
+		//ospray::cpp::Data data(nspheres, OSP_VEC4F, sphereData.data());
+        //auto data = ospray::cpp::Data(spheres);
+        auto positionData = ospNewSharedData1D(spherePosition.data(), OSP_VEC4F, nspheres);
+        auto radiusData = ospNewSharedData1D(sphereRadius.data(), OSP_FLOAT, nspheres);
+        ospCommit(positionData);
+        ospCommit(radiusData);
+		//ospCommit(data);
+		//ospSetParam(spheres,"sphere.position",OSP_VEC3F,spherePosition.data());
+		//ospSetParam(spheres,"sphere.radius",OSP_VEC3F,sphereRadius.data());
+		ospSetObject(spheres,"sphere.position",positionData);
+		ospSetObject(spheres,"sphere.radius",radiusData);
+		//spheres.setParam("spheres", data);
+        ospCommit(spheres);
 
-		data = ospray::cpp::Data(nspheres, OSP_FLOAT4, colorData.data());
-		data.commit();
-		spheres.set("color", data);
+		//data = ospray::cpp::Data(nspheres, OSP_VEC4F, colorData.data());
+        //auto data = ospNewSharedData1D(colorData.data(), OSP_VEC4F, nspheres);
+        //ospCommit(data);
+		//spheres.setParam("color", data);
+        //spheres.commit();
 
-		spheres.setMaterial(*_ospMaterial);
-		spheres.commit();
-		_ospWorld->addGeometry(spheres);
+        auto spheresModel = ospNewGeometricModel(spheres);
+        //spheres.setMaterial(*_ospMaterial);
+        //ospSetObject(spheres.handle(),"material",_ospMaterial->handle());
+        //spheresModel.setParam("material",*_ospMaterial);
+        auto colorOSPData = ospNewSharedData1D(colorData.data(), OSP_VEC4F, nspheres);
+        ospCommit(colorOSPData);
+        //ospSetParam(spheresModel,"color",OSP_VEC4F,colorData.data());
+        ospSetObject(spheresModel,"color",colorOSPData);
+        //ospSetParam(spheresModel,"material",OSP_MATERIAL,_ospMaterial);
+        ospSetObject(spheresModel,"material",_ospMaterial);
+        //spheresModel.commit();
+        ospCommit(spheresModel);
+		geometricModels.push_back(spheresModel);
+		//_ospGroup->addGeometry(spheres);
 	}
 	else if(particleBuffer.particleShape() == ParticlePrimitive::SquareCubicShape || particleBuffer.particleShape() == ParticlePrimitive::BoxShape) {
 		// Rendering cubic/box particles.
 
 		// We will pass the particle geometry as a triangle mesh to OSPRay.
-		std::vector<Point_3<float>> vertices;
-		std::vector<ColorAT<float>> colors;
-		std::vector<Vector_3<float>> normals;
+		//std::vector<Point_3<float>> vertices;
+		std::vector<ospray::vec3f> vertices;
+		//std::vector<ColorAT<float>> colors;
+		std::vector<ospray::vec4f> colors;
+		//std::vector<Vector_3<float>> normals;
+		std::vector<ospray::vec3f> normals;
 		std::vector<int> indices;
 		vertices.reserve(particleBuffer.positions().size() * 6 * 4);
 		colors.reserve(particleBuffer.positions().size() * 6 * 4);
@@ -469,7 +596,8 @@ void OSPRayRenderer::renderParticles(const DefaultParticlePrimitive& particleBuf
 			if(c->a() <= 0) continue;
 			const ColorAT<float> color = (ColorAT<float>)*c;
 			for(int i = 0; i < 6*4; i++) {
-				colors.push_back(color);
+				//colors.push_back(color);
+				colors.push_back(ospray::vec4f(color.r(),color.g(),color.b(),color.a()));
 			}
 			Point_3<float> tp = (Point_3<float>)(tm * (*p));
 			QuaternionT<float> quat(0,0,0,1);
@@ -507,40 +635,50 @@ void OSPRayRenderer::renderParticles(const DefaultParticlePrimitive& particleBuf
 
 			// -X face
 			baseIndex = (int)vertices.size();
-			vertices.push_back(corners[0]); vertices.push_back(corners[3]); vertices.push_back(corners[7]); vertices.push_back(corners[4]);
+			vertices.push_back(ospray::vec3f (corners[0].x(),corners[0].y(),corners[0].z())); vertices.push_back(ospray::vec3f (corners[3].x(),corners[3].y(),corners[3].z())); vertices.push_back(ospray::vec3f (corners[7].x(),corners[7].y(),corners[7].z())); vertices.push_back(ospray::vec3f (corners[4].x(),corners[4].y(),corners[4].z()));
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 1); indices.push_back(baseIndex + 2);
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 2); indices.push_back(baseIndex + 3);
-			for(int i = 0; i < 4; i++) normals.push_back(faceNormals[0]);
+			for(int i = 0; i < 4; i++) normals.push_back(ospray::vec3f(faceNormals[0].x(),faceNormals[0].y(),faceNormals[0].z()));
 			// +X face
 			baseIndex = (int)vertices.size();
-			vertices.push_back(corners[1]); vertices.push_back(corners[5]); vertices.push_back(corners[6]); vertices.push_back(corners[2]);
+			//vertices.push_back(corners[1]); vertices.push_back(corners[5]); vertices.push_back(corners[6]); vertices.push_back(corners[2]);
+            vertices.push_back(ospray::vec3f (corners[1].x(),corners[1].y(),corners[1].z())); vertices.push_back(ospray::vec3f (corners[5].x(),corners[5].y(),corners[5].z())); vertices.push_back(ospray::vec3f (corners[6].x(),corners[6].y(),corners[6].z())); vertices.push_back(ospray::vec3f (corners[2].x(),corners[2].y(),corners[2].z()));
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 1); indices.push_back(baseIndex + 2);
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 2); indices.push_back(baseIndex + 3);
-			for(int i = 0; i < 4; i++) normals.push_back(faceNormals[1]);
+			//for(int i = 0; i < 4; i++) normals.push_back(faceNormals[1]);
+            for(int i = 0; i < 4; i++) normals.push_back(ospray::vec3f(faceNormals[1].x(),faceNormals[1].y(),faceNormals[1].z()));
 			// -Y face
 			baseIndex = (int)vertices.size();
-			vertices.push_back(corners[0]); vertices.push_back(corners[4]); vertices.push_back(corners[5]); vertices.push_back(corners[1]);
+			//vertices.push_back(corners[0]); vertices.push_back(corners[4]); vertices.push_back(corners[5]); vertices.push_back(corners[1]);
+            vertices.push_back(ospray::vec3f (corners[0].x(),corners[0].y(),corners[0].z())); vertices.push_back(ospray::vec3f (corners[4].x(),corners[4].y(),corners[4].z())); vertices.push_back(ospray::vec3f (corners[5].x(),corners[5].y(),corners[5].z())); vertices.push_back(ospray::vec3f (corners[1].x(),corners[1].y(),corners[1].z()));
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 1); indices.push_back(baseIndex + 2);
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 2); indices.push_back(baseIndex + 3);
-			for(int i = 0; i < 4; i++) normals.push_back(faceNormals[2]);
+			//for(int i = 0; i < 4; i++) normals.push_back(faceNormals[2]);
+            for(int i = 0; i < 4; i++) normals.push_back(ospray::vec3f(faceNormals[2].x(),faceNormals[2].y(),faceNormals[2].z()));
 			// +Y face
 			baseIndex = (int)vertices.size();
-			vertices.push_back(corners[2]); vertices.push_back(corners[6]); vertices.push_back(corners[7]); vertices.push_back(corners[3]);
-			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 1); indices.push_back(baseIndex + 2);
+			//vertices.push_back(corners[2]); vertices.push_back(corners[6]); vertices.push_back(corners[7]); vertices.push_back(corners[3]);
+            vertices.push_back(ospray::vec3f (corners[2].x(),corners[2].y(),corners[2].z())); vertices.push_back(ospray::vec3f (corners[6].x(),corners[6].y(),corners[6].z())); vertices.push_back(ospray::vec3f (corners[7].x(),corners[7].y(),corners[7].z())); vertices.push_back(ospray::vec3f (corners[3].x(),corners[3].y(),corners[3].z()));
+            indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 1); indices.push_back(baseIndex + 2);
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 2); indices.push_back(baseIndex + 3);
-			for(int i = 0; i < 4; i++) normals.push_back(faceNormals[3]);
+			//for(int i = 0; i < 4; i++) normals.push_back(faceNormals[3]);
+            for(int i = 0; i < 4; i++) normals.push_back(ospray::vec3f(faceNormals[3].x(),faceNormals[3].y(),faceNormals[3].z()));
 			// -Z face
 			baseIndex = (int)vertices.size();
-			vertices.push_back(corners[0]); vertices.push_back(corners[1]); vertices.push_back(corners[2]); vertices.push_back(corners[3]);
+			//vertices.push_back(corners[0]); vertices.push_back(corners[1]); vertices.push_back(corners[2]); vertices.push_back(corners[3]);
+            vertices.push_back(ospray::vec3f (corners[0].x(),corners[0].y(),corners[0].z())); vertices.push_back(ospray::vec3f (corners[1].x(),corners[1].y(),corners[1].z()));  vertices.push_back(ospray::vec3f (corners[2].x(),corners[2].y(),corners[2].z()));vertices.push_back(ospray::vec3f (corners[3].x(),corners[3].y(),corners[3].z()));
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 1); indices.push_back(baseIndex + 2);
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 2); indices.push_back(baseIndex + 3);
-			for(int i = 0; i < 4; i++) normals.push_back(faceNormals[4]);
+			//for(int i = 0; i < 4; i++) normals.push_back(faceNormals[4]);
+            for(int i = 0; i < 4; i++) normals.push_back(ospray::vec3f(faceNormals[4].x(),faceNormals[4].y(),faceNormals[4].z()));
 			// +Z face
 			baseIndex = (int)vertices.size();
-			vertices.push_back(corners[4]); vertices.push_back(corners[7]); vertices.push_back(corners[6]); vertices.push_back(corners[5]);
+			//vertices.push_back(corners[4]); vertices.push_back(corners[7]); vertices.push_back(corners[6]); vertices.push_back(corners[5]);
+            vertices.push_back(ospray::vec3f (corners[4].x(),corners[4].y(),corners[4].z())); vertices.push_back(ospray::vec3f (corners[7].x(),corners[7].y(),corners[7].z()));  vertices.push_back(ospray::vec3f (corners[6].x(),corners[6].y(),corners[6].z())); vertices.push_back(ospray::vec3f (corners[5].x(),corners[5].y(),corners[5].z()));
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 1); indices.push_back(baseIndex + 2);
 			indices.push_back(baseIndex + 0); indices.push_back(baseIndex + 2); indices.push_back(baseIndex + 3);
-			for(int i = 0; i < 4; i++) normals.push_back(faceNormals[5]);
+			//for(int i = 0; i < 4; i++) normals.push_back(faceNormals[5]);
+            for(int i = 0; i < 4; i++) normals.push_back(ospray::vec3f(faceNormals[5].x(),faceNormals[5].y(),faceNormals[5].z()));
 		}
 		OVITO_ASSERT(normals.size() == colors.size());
 		OVITO_ASSERT(normals.size() == vertices.size());
@@ -552,28 +690,44 @@ void OSPRayRenderer::renderParticles(const DefaultParticlePrimitive& particleBuf
 		size_t maxChunkSize = ((1ull << 31) / (sizeof(ColorAT<float>) * 6 * 4)) - 1;
 		for(size_t chunkOffset = 0; chunkOffset < nparticles; chunkOffset += maxChunkSize) {
 
-			OSPReferenceWrapper<ospray::cpp::Geometry> triangles("triangles");
+			//OSPReferenceWrapper<ospray::cpp::Geometry> triangles("triangles");
+			auto triangles = ospNewGeometry("triangles");
 
 			size_t chunkSize = std::min(maxChunkSize, nparticles - chunkOffset);
-			OSPReferenceWrapper<ospray::cpp::Data> data(chunkSize * 6 * 4, OSP_FLOAT3, vertices.data() + (chunkOffset * 6 * 4));
-			data.commit();
-			triangles.set("vertex", data);
+			//ospray::cpp::Data data(chunkSize * 6 * 4, OSP_VEC3F, vertices.data() + (chunkOffset * 6 * 4));
+            auto data = ospNewSharedData1D(vertices.data()  + (chunkOffset * 6 * 4),OSP_VEC3F, chunkSize * 6 * 4);
+            //ospray::cpp::Data data(chunkSize * 6 * 4, OSP_VEC3F, vertices.data());
+            //ospray::cpp::Data data(vertices);
+			//data.commit();
+			ospCommit(data);
+			//ospSetParam(triangles,"vertex",OSP_VEC3F, data);
+			ospSetObject(triangles,"vertex", data);
 
-			data = ospray::cpp::Data(chunkSize * 6 * 4, OSP_FLOAT4, colors.data() + (chunkOffset * 6 * 4));
-			data.commit();
-			triangles.set("vertex.color", data);
+			//data = ospray::cpp::Data(chunkSize * 6 * 4,OSP_VEC4F, colors.data() + (chunkOffset * 6 * 4));
+			data = ospNewSharedData1D(colors.data() + (chunkOffset * 6 * 4),OSP_VEC4F, chunkSize * 6 * 4);
+            ospCommit(data);
+			//ospSetParam(triangles,"vertex.color",OSP_VEC4F, data);
+			ospSetObject(triangles,"vertex.color",data);
 
-			data = ospray::cpp::Data(chunkSize * 6 * 4, OSP_FLOAT3, normals.data() + (chunkOffset * 6 * 4));
-			data.commit();
-			triangles.set("vertex.normal", data);
+			//data = ospray::cpp::Data(chunkSize * 6 * 4, OSP_VEC3F, normals.data() + (chunkOffset * 6 * 4));
+            data = ospNewSharedData1D(normals.data() + (chunkOffset * 6 * 4),OSP_VEC3F, chunkSize * 6 * 4);
+            ospCommit(data);
+			ospSetObject(triangles,"vertex.normal", data);
 
-			data = ospray::cpp::Data(chunkSize * 6 * 2, OSP_INT3, indices.data() + (chunkOffset * 6 * 3 * 2));
-			data.commit();
-			triangles.set("index", data);
+			//data = ospray::cpp::Data(chunkSize * 6 * 2, OSP_VEC3I, indices.data() + (chunkOffset * 6 * 3 * 2));
+            data = ospNewSharedData1D(indices.data() + (chunkOffset * 6 * 3*2),OSP_VEC3I, chunkSize * 6 * 2);
+            ospCommit(data);
+			ospSetObject(triangles,"index", data);
 
-			triangles.setMaterial(*_ospMaterial);
-			triangles.commit();
-			_ospWorld->addGeometry(triangles);
+            ospCommit(triangles);
+
+            OSPGeometricModel trianglesModel = ospNewGeometricModel(triangles);
+            //triangles.setMaterial(*_ospMaterial);
+            //ospSetObject(triangles.handle(),"material",_ospMaterial->handle());
+            ospSetParam(trianglesModel,"material",OSP_MATERIAL, _ospMaterial);
+            ospCommit(trianglesModel);
+            geometricModels.push_back(trianglesModel);
+            //_ospGroup->addGeometry(triangles);
 		}
 	}
 	else if(particleBuffer.particleShape() == ParticlePrimitive::EllipsoidShape) {
@@ -583,9 +737,13 @@ void OSPRayRenderer::renderParticles(const DefaultParticlePrimitive& particleBuf
 		auto shape_end = particleBuffer.shapes().cend();
 		auto orientation = particleBuffer.orientations().cbegin();
 		auto orientation_end = particleBuffer.orientations().cend();
-		std::vector<std::array<float,14>> quadricsData(particleBuffer.positions().size());
-		std::vector<ospcommon::vec4f> colorData(particleBuffer.positions().size());
+		std::vector<std::array<float,10>> quadricsData(particleBuffer.positions().size());
+		std::vector<ospcommon::math::vec3f> quadricsCenter(particleBuffer.positions().size());
+		std::vector<float> quadricsRadius(particleBuffer.positions().size());
+		std::vector<ospray::vec4f> colorData(particleBuffer.positions().size());
 		auto quadricIter = quadricsData.begin();
+		auto quadricCenterIter = quadricsCenter.begin();
+		auto quadricRadiusIter = quadricsRadius.begin();
 		auto colorIter = colorData.begin();
 		for(; p != p_end && shape != shape_end; ++p, ++c, ++shape, ++r) {
 			if(c->a() <= 0) continue;
@@ -600,39 +758,39 @@ void OSPRayRenderer::renderParticles(const DefaultParticlePrimitive& particleBuf
 				else
 					quat /= c;
 			}
-			(*quadricIter)[0] = tp.x();
-			(*quadricIter)[1] = tp.y();
-			(*quadricIter)[2] = tp.z();
+			(*quadricCenterIter)[0] = tp.x();
+			(*quadricCenterIter)[1] = tp.y();
+			(*quadricCenterIter)[2] = tp.z();
 			if(shape->x() != 0 && shape->y() != 0 && shape->z() != 0) {
 				Matrix3 qmat(FloatType(1)/(shape->x()*shape->x()), 0, 0,
 						     0, FloatType(1)/(shape->y()*shape->y()), 0,
 						     0, 0, FloatType(1)/(shape->z()*shape->z()));
 				Matrix3 rot = linear_tm * Matrix3::rotation(quat);
 				Matrix3 quadric = rot * qmat * rot.transposed();
-				(*quadricIter)[3] = std::max(shape->x(), std::max(shape->y(), shape->z()));
-				(*quadricIter)[4] = quadric(0,0);
-				(*quadricIter)[5] = quadric(0,1);
-				(*quadricIter)[6] = quadric(0,2);
-				(*quadricIter)[7] = 0;
-				(*quadricIter)[8] =	quadric(1,1);
-				(*quadricIter)[9] = quadric(1,2);
-				(*quadricIter)[10] = 0;
-				(*quadricIter)[11] = quadric(2,2);
-				(*quadricIter)[12] = 0;
-				(*quadricIter)[13] = -1;
+				(*quadricRadiusIter) = std::max(shape->x(), std::max(shape->y(), shape->z()));
+				(*quadricIter)[0] = quadric(0,0);
+				(*quadricIter)[1] = quadric(0,1);
+				(*quadricIter)[2] = quadric(0,2);
+				(*quadricIter)[3] = 0;
+				(*quadricIter)[4] =	quadric(1,1);
+				(*quadricIter)[5] = quadric(1,2);
+				(*quadricIter)[6] = 0;
+				(*quadricIter)[7] = quadric(2,2);
+				(*quadricIter)[8] = 0;
+				(*quadricIter)[9] = -1;
 			}
 			else {
-				(*quadricIter)[3] = *r;
-				(*quadricIter)[4] = FloatType(1)/((*r)*(*r));
+				(*quadricRadiusIter) = *r;
+				(*quadricIter)[0] = FloatType(1)/((*r)*(*r));
+				(*quadricIter)[1] = 0;
+				(*quadricIter)[2] = 0;
+				(*quadricIter)[3] = 0;
+				(*quadricIter)[4] =	FloatType(1)/((*r)*(*r));
 				(*quadricIter)[5] = 0;
 				(*quadricIter)[6] = 0;
-				(*quadricIter)[7] = 0;
-				(*quadricIter)[8] =	FloatType(1)/((*r)*(*r));
-				(*quadricIter)[9] = 0;
-				(*quadricIter)[10] = 0;
-				(*quadricIter)[11] = FloatType(1)/((*r)*(*r));
-				(*quadricIter)[12] = 0;
-				(*quadricIter)[13] = -1;
+				(*quadricIter)[7] = FloatType(1)/((*r)*(*r));
+				(*quadricIter)[8] = 0;
+				(*quadricIter)[9] = -1;
 			}
 			(*colorIter)[0] = c->r();
 			(*colorIter)[1] = c->g();
@@ -650,20 +808,46 @@ void OSPRayRenderer::renderParticles(const DefaultParticlePrimitive& particleBuf
 		size_t maxChunkSize = ((1ull << 31) / sizeof(std::array<float,14>)) - 1;
 		for(size_t chunkOffset = 0; chunkOffset < nquadrics; chunkOffset += maxChunkSize) {
 
-			OSPReferenceWrapper<ospray::cpp::Geometry> quadrics("quadrics");
+			//OSPReferenceWrapper<ospray::cpp::Geometry> quadrics("quadrics");
+			auto quadrics = ospNewGeometry("quadrics");
 
 			size_t chunkSize = std::min(maxChunkSize, nquadrics - chunkOffset);
-			OSPReferenceWrapper<ospray::cpp::Data> data(chunkSize * 14, OSP_FLOAT, quadricsData.data() + chunkOffset);
-			data.commit();
-			quadrics.set("quadrics", data);
+			//ospray::cpp::Data data(chunkSize * 14, OSP_FLOAT, (float*) quadricsData.data() + chunkOffset);
+			//auto data = ospNewSharedData1D((float*) quadricsData.data() + chunkOffset, OSP_FLOAT, chunkSize * 14); //TODO : TO CHECK : Casting pointer ???
+			auto data = ospNewSharedData1D((float*) quadricsData.data() + chunkOffset, OSP_FLOAT, chunkSize * 10); //TODO : TO CHECK : Casting pointer ???
+			auto centerData = ospNewSharedData1D((float*) quadricsCenter.data() + chunkOffset, OSP_VEC3F, chunkSize);
+			auto radiusData = ospNewSharedData1D((float*) quadricsRadius.data() + chunkOffset, OSP_FLOAT, chunkSize);
+			//data.commit();
+			ospCommit(data);
+			ospCommit(centerData);
+			ospCommit(radiusData);
+			//ospSetParam(quadrics,"quadrics.coeff",OSP_FLOAT, data);
+			ospSetObject(quadrics,"quadrics.coeff",data);
 
-			data = ospray::cpp::Data(chunkSize, OSP_FLOAT4, colorData.data() + chunkOffset);
-			data.commit();
-			quadrics.set("color", data);
+			//ospSetParam(quadrics, "quadrics.center",OSP_VEC3F,quadricsCenter.data());
+			ospSetObject(quadrics, "quadrics.center",centerData);
+			//ospSetParam(quadrics, "quadrics.radius",OSP_FLOAT,quadricsRadius.data());
+			ospSetObject(quadrics, "quadrics.radius",radiusData);
+            ospCommit(quadrics);
 
-			quadrics.setMaterial(*_ospMaterial);
-			quadrics.commit();
-			_ospWorld->addGeometry(quadrics);
+/*
+			data = ospray::cpp::Data(chunkSize, OSP_VEC4F, colorData.data() + chunkOffset);
+			data.commit();
+			quadrics.setParam("color", data);
+            quadrics.commit();*/
+
+            //ospray::cpp::GeometricModel quadricsModel(quadrics);
+            auto quadricsModel= ospNewGeometricModel(quadrics);
+            //quadrics.setMaterial(*_ospMaterial);
+            //ospSetObject(quadrics.handle(),"material",_ospMaterial->handle());
+            auto colorOSPData = ospNewSharedData1D(colorData.data() + chunkOffset, OSP_VEC4F, chunkSize);
+            ospCommit(colorOSPData);
+            ospSetObject(quadrics,"color",colorOSPData);
+            ospSetParam(quadricsModel,"material",OSP_MATERIAL,_ospMaterial);
+            //quadricsModel.commit();
+            ospCommit(quadricsModel);
+            geometricModels.push_back(quadricsModel);
+			//_ospGroup->addGeometry(quadrics);
 		}
 	}
 }
@@ -676,17 +860,29 @@ void OSPRayRenderer::renderArrows(const DefaultArrowPrimitive& arrowBuffer)
 	const AffineTransformation tm = modelTM();
 
 	// Compile buffer with cylinder data in OSPRay format.
-	std::vector<std::array<float,7>> cylData(arrowBuffer.elements().size());
-	std::vector<ospcommon::vec4f> colorData(arrowBuffer.elements().size());
-	std::vector<std::array<float,7>> discData(arrowBuffer.elements().size()*2);
-	std::vector<ospcommon::vec4f> discColorData(discData.size());
-	std::vector<std::array<float,7>> coneData(arrowBuffer.shape() == ArrowPrimitive::CylinderShape ? 0 : arrowBuffer.elements().size());
-	std::vector<ospcommon::vec4f> coneColorData(coneData.size());
-	auto cylIter = cylData.begin();
+	std::vector<ospcommon::math::vec3f> cylVertex0Data(arrowBuffer.elements().size());
+	std::vector<ospcommon::math::vec3f> cylVertex1Data(arrowBuffer.elements().size());
+	std::vector<float> cylRadiusData(arrowBuffer.elements().size());
+	std::vector<ospray::vec4f> colorData(arrowBuffer.elements().size());
+	std::vector<ospcommon::math::vec3f> discCenterData(arrowBuffer.elements().size()*2);
+	std::vector<ospcommon::math::vec3f> discNormalData(arrowBuffer.elements().size()*2);
+	std::vector<float> discRadiusData(arrowBuffer.elements().size()*2);
+	std::vector<ospray::vec4f> discColorData(discCenterData.size());
+	std::vector<ospcommon::math::vec3f> coneCenterData(arrowBuffer.shape() == ArrowPrimitive::CylinderShape ? 0 : arrowBuffer.elements().size());
+	std::vector<ospcommon::math::vec3f> coneAxisData(arrowBuffer.shape() == ArrowPrimitive::CylinderShape ? 0 : arrowBuffer.elements().size());
+	std::vector<float> coneRadiusData(arrowBuffer.shape() == ArrowPrimitive::CylinderShape ? 0 : arrowBuffer.elements().size());
+	std::vector<ospray::vec4f> coneColorData(coneCenterData.size());
+	auto cylVertex0Iter = cylVertex0Data.begin();
+	auto cylVertex1Iter = cylVertex1Data.begin();
+	auto cylRadiusIter = cylRadiusData.begin();
 	auto colorIter = colorData.begin();
-	auto discIter = discData.begin();
+	auto discNormalIter = discNormalData.begin();
+	auto discCenterIter = discCenterData.begin();
+	auto discRadiusIter = discRadiusData.begin();
 	auto discColorIter = discColorData.begin();
-	auto coneIter = coneData.begin();
+	auto coneCenterIter = coneCenterData.begin();
+	auto coneAxisIter = coneAxisData.begin();
+	auto coneRadiusIter = coneRadiusData.begin();
 	auto coneColorIter = coneColorData.begin();
 	for(const DefaultArrowPrimitive::ArrowElement& element : arrowBuffer.elements()) {
 		Point3 tp = tm * element.pos;
@@ -695,31 +891,35 @@ void OSPRayRenderer::renderArrows(const DefaultArrowPrimitive& arrowBuffer)
 			ta = tm * element.dir;
 			Vector3 normal = ta;
 			normal.normalizeSafely();
-			(*discIter)[0] = tp.x();
-			(*discIter)[1] = tp.y();
-			(*discIter)[2] = tp.z();
-			(*discIter)[3] = -normal.x();
-			(*discIter)[4] = -normal.y();
-			(*discIter)[5] = -normal.z();
-			(*discIter)[6] = element.width;
+			(*discCenterIter)[0] = tp.x();
+			(*discCenterIter)[1] = tp.y();
+			(*discCenterIter)[2] = tp.z();
+			(*discNormalIter)[0] = -normal.x();
+			(*discNormalIter)[1] = -normal.y();
+			(*discNormalIter)[2] = -normal.z();
+			(*discRadiusIter) = element.width;
 			(*discColorIter)[0] = element.color.r();
 			(*discColorIter)[1] = element.color.g();
 			(*discColorIter)[2] = element.color.b();
 			(*discColorIter)[3] = element.color.a();
-			++discIter;
+			++discNormalIter;
+			++discCenterIter;
+			++discRadiusIter;
 			++discColorIter;
-			(*discIter)[0] = tp.x() + ta.x();
-			(*discIter)[1] = tp.y() + ta.y();
-			(*discIter)[2] = tp.z() + ta.z();
-			(*discIter)[3] = normal.x();
-			(*discIter)[4] = normal.y();
-			(*discIter)[5] = normal.z();
-			(*discIter)[6] = element.width;
+			(*discCenterIter)[0] = tp.x() + ta.x();
+			(*discCenterIter)[1] = tp.y() + ta.y();
+			(*discCenterIter)[2] = tp.z() + ta.z();
+			(*discNormalIter)[0] = normal.x();
+			(*discNormalIter)[1] = normal.y();
+			(*discNormalIter)[2] = normal.z();
+			(*discRadiusIter) = element.width;
 			(*discColorIter)[0] = element.color.r();
 			(*discColorIter)[1] = element.color.g();
 			(*discColorIter)[2] = element.color.b();
 			(*discColorIter)[3] = element.color.a();
-			++discIter;
+            ++discNormalIter;
+            ++discCenterIter;
+            ++discRadiusIter;
 			++discColorIter;
 		}
 		else {
@@ -735,44 +935,50 @@ void OSPRayRenderer::renderArrows(const DefaultArrowPrimitive& arrowBuffer)
 				Vector3 tb = tm * (element.dir * (arrowHeadLength / length));
 				Vector3 normal = ta;
 				normal.normalizeSafely();
-				(*discIter)[0] = tp.x();
-				(*discIter)[1] = tp.y();
-				(*discIter)[2] = tp.z();
-				(*discIter)[3] = -normal.x();
-				(*discIter)[4] = -normal.y();
-				(*discIter)[5] = -normal.z();
-				(*discIter)[6] = element.width;
+				(*discCenterIter)[0] = tp.x();
+				(*discCenterIter)[1] = tp.y();
+				(*discCenterIter)[2] = tp.z();
+				(*discNormalIter)[0] = -normal.x();
+				(*discNormalIter)[1] = -normal.y();
+				(*discNormalIter)[2] = -normal.z();
+				(*discRadiusIter) = element.width;
 				(*discColorIter)[0] = element.color.r();
 				(*discColorIter)[1] = element.color.g();
 				(*discColorIter)[2] = element.color.b();
 				(*discColorIter)[3] = element.color.a();
-				++discIter;
+                ++discNormalIter;
+                ++discCenterIter;
+                ++discRadiusIter;
 				++discColorIter;
-				(*discIter)[0] = tp.x() + ta.x();
-				(*discIter)[1] = tp.y() + ta.y();
-				(*discIter)[2] = tp.z() + ta.z();
-				(*discIter)[3] = -normal.x();
-				(*discIter)[4] = -normal.y();
-				(*discIter)[5] = -normal.z();
-				(*discIter)[6] = arrowHeadRadius;
+				(*discCenterIter)[0] = tp.x() + ta.x();
+				(*discCenterIter)[1] = tp.y() + ta.y();
+				(*discCenterIter)[2] = tp.z() + ta.z();
+				(*discNormalIter)[0] = -normal.x();
+				(*discNormalIter)[1] = -normal.y();
+				(*discNormalIter)[2] = -normal.z();
+				(*discRadiusIter) = arrowHeadRadius;
 				(*discColorIter)[0] = element.color.r();
 				(*discColorIter)[1] = element.color.g();
 				(*discColorIter)[2] = element.color.b();
 				(*discColorIter)[3] = element.color.a();
-				++discIter;
+                ++discNormalIter;
+                ++discCenterIter;
+                ++discRadiusIter;
 				++discColorIter;
-				(*coneIter)[0] = tp.x() + ta.x() + tb.x();
-				(*coneIter)[1] = tp.y() + ta.y() + tb.y();
-				(*coneIter)[2] = tp.z() + ta.z() + tb.z();
-				(*coneIter)[3] = -tb.x();
-				(*coneIter)[4] = -tb.y();
-				(*coneIter)[5] = -tb.z();
-				(*coneIter)[6] = arrowHeadRadius;
+				(*coneCenterIter)[0] = tp.x() + ta.x() + tb.x();
+				(*coneCenterIter)[1] = tp.y() + ta.y() + tb.y();
+				(*coneCenterIter)[2] = tp.z() + ta.z() + tb.z();
+				(*coneAxisIter)[0] = -tb.x();
+				(*coneAxisIter)[1] = -tb.y();
+				(*coneAxisIter)[2] = -tb.z();
+				(*coneRadiusIter) = arrowHeadRadius;
 				(*coneColorIter)[0] = element.color.r();
 				(*coneColorIter)[1] = element.color.g();
 				(*coneColorIter)[2] = element.color.b();
 				(*coneColorIter)[3] = element.color.a();
-				++coneIter;
+				++coneCenterIter;
+				++coneAxisIter;
+				++coneRadiusIter;
 				++coneColorIter;
 			}
 			else {
@@ -780,108 +986,179 @@ void OSPRayRenderer::renderArrows(const DefaultArrowPrimitive& arrowBuffer)
 				ta = tm * element.dir;
 				Vector3 normal = ta;
 				normal.normalizeSafely();
-				(*discIter)[0] = tp.x();
-				(*discIter)[1] = tp.y();
-				(*discIter)[2] = tp.z();
-				(*discIter)[3] = -normal.x();
-				(*discIter)[4] = -normal.y();
-				(*discIter)[5] = -normal.z();
-				(*discIter)[6] = r;
+				(*discCenterIter)[0] = tp.x();
+				(*discCenterIter)[1] = tp.y();
+				(*discCenterIter)[2] = tp.z();
+				(*discNormalIter)[0] = -normal.x();
+				(*discNormalIter)[1] = -normal.y();
+				(*discNormalIter)[2] = -normal.z();
+				(*discRadiusIter) = r;
 				(*discColorIter)[0] = element.color.r();
 				(*discColorIter)[1] = element.color.g();
 				(*discColorIter)[2] = element.color.b();
 				(*discColorIter)[3] = element.color.a();
-				++discIter;
+                ++discNormalIter;
+                ++discCenterIter;
+                ++discRadiusIter;
 				++discColorIter;
-				(*coneIter)[0] = tp.x() + ta.x();
-				(*coneIter)[1] = tp.y() + ta.y();
-				(*coneIter)[2] = tp.z() + ta.z();
-				(*coneIter)[3] = -ta.x();
-				(*coneIter)[4] = -ta.y();
-				(*coneIter)[5] = -ta.z();
-				(*coneIter)[6] = r;
+				(*coneCenterIter)[0] = tp.x() + ta.x();
+				(*coneCenterIter)[1] = tp.y() + ta.y();
+				(*coneCenterIter)[2] = tp.z() + ta.z();
+				(*coneAxisIter)[0] = -ta.x();
+				(*coneAxisIter)[1] = -ta.y();
+				(*coneAxisIter)[2] = -ta.z();
+				(*coneRadiusIter) = r;
 				(*coneColorIter)[0] = element.color.r();
 				(*coneColorIter)[1] = element.color.g();
 				(*coneColorIter)[2] = element.color.b();
 				(*coneColorIter)[3] = element.color.a();
-				++coneIter;
+                ++coneCenterIter;
+                ++coneAxisIter;
+                ++coneRadiusIter;
 				++coneColorIter;
 				continue;
 			}
 		}
-		(*cylIter)[0] = tp.x();
-		(*cylIter)[1] = tp.y();
-		(*cylIter)[2] = tp.z();
-		(*cylIter)[3] = tp.x() + ta.x();
-		(*cylIter)[4] = tp.y() + ta.y();
-		(*cylIter)[5] = tp.z() + ta.z();
-		(*cylIter)[6] = element.width;
+		(*cylVertex0Iter)[0] = tp.x();
+		(*cylVertex0Iter)[1] = tp.y();
+		(*cylVertex0Iter)[2] = tp.z();
+		(*cylVertex1Iter)[0] = tp.x() + ta.x();
+		(*cylVertex1Iter)[1] = tp.y() + ta.y();
+		(*cylVertex1Iter)[2] = tp.z() + ta.z();
+		(*cylRadiusIter) = element.width;
 		(*colorIter)[0] = element.color.r();
 		(*colorIter)[1] = element.color.g();
 		(*colorIter)[2] = element.color.b();
 		(*colorIter)[3] = element.color.a();
-		++cylIter;
+		++cylVertex0Iter;
+		++cylVertex1Iter;
+		++cylRadiusIter;
 		++colorIter;
 	}
-	size_t ncylinders = cylIter - cylData.begin();
+	size_t ncylinders = cylRadiusIter - cylRadiusData.begin();
 	if(ncylinders != 0) {
-		OSPReferenceWrapper<ospray::cpp::Geometry> cylinders("cylinders");
-		cylinders.set("bytes_per_cylinder", (int)sizeof(float) * 7);
-		cylinders.set("offset_radius", (int)sizeof(float) * 6);
+		//OSPReferenceWrapper<ospray::cpp::Geometry> cylinders("cylinders");
+		auto cylinders = ospNewGeometry("cylinders");
+		//cylinders.setParam("bytes_per_cylinder", (int)sizeof(float) * 7);
+		//cylinders.setParam("offset_radius", (int)sizeof(float) * 6);
 
-		OSPReferenceWrapper<ospray::cpp::Data> data(ncylinders * 7, OSP_FLOAT, cylData.data());
-		data.commit();
-		cylinders.set("cylinders", data);
+		//ospray::cpp::Data data(ncylinders * 7, OSP_FLOAT, (float*) cylData.data()); //TODO : TO CHECK : Casting pointer ???
+        auto position0Data = ospNewSharedData1D(cylVertex0Data.data(), OSP_VEC3F, ncylinders);
+        auto position1Data = ospNewSharedData1D(cylVertex1Data.data(), OSP_VEC3F, ncylinders);
+        auto radiusData = ospNewSharedData1D(cylRadiusData.data(), OSP_FLOAT, ncylinders);
+        ospCommit(position0Data);
+        ospCommit(position1Data);
+        ospCommit(radiusData);
+//		cylinders.setParam("cylinders", data);
+//
+//        ospSetParam(cylinders,"cylinder.radius",OSP_FLOAT, cylRadiusData.data());
+//        ospSetParam(cylinders,"cylinder.position0",OSP_VEC3F, cylVertex0Data.data());
+//        ospSetParam(cylinders,"cylinder.position1",OSP_VEC3F, cylVertex1Data.data());
+        ospSetObject(cylinders,"cylinder.radius",radiusData);
+        ospSetObject(cylinders,"cylinder.position0",position0Data);
+        ospSetObject(cylinders,"cylinder.position1",position1Data);
+        ospCommit (cylinders);
 
-		data = ospray::cpp::Data(ncylinders, OSP_FLOAT4, colorData.data());
-		data.commit();
-		cylinders.set("color", data);
+		//data = ospray::cpp::Data(ncylinders, OSP_VEC4F, colorData.data());
+        auto colorOSPData = ospNewSharedData1D(colorData.data(),OSP_VEC4F, ncylinders);
+        ospCommit(colorOSPData);
+//		cylinders.setParam("color", data);
+//      cylinders.commit();
 
-		cylinders.setMaterial(*_ospMaterial);
-		cylinders.commit();
-		_ospWorld->addGeometry(cylinders);
+        //ospray::cpp::Geometry cylindersModel(cylinders);
+        auto cylindersModel = ospNewGeometricModel(cylinders);
+        //cylinders.setMaterial(*_ospMaterial);
+        //ospSetObject(cylinders.handle(),"material",_ospMaterial->handle());
+        //ospSetObject(cylinders.handle(),"material",_ospMaterial->handle());
+        //cylinders.setParam("material",*_ospMaterial);
+        ospSetParam(cylindersModel,"material",OSP_MATERIAL,_ospMaterial);
+        //ospSetParam(cylindersModel,"color",OSP_VEC4F,colorData.data());
+        ospSetObject(cylindersModel,"color",colorOSPData);
+        ospCommit(cylindersModel);
+        geometricModels.push_back(cylindersModel);
+		//_ospGroup->addGeometry(cylinders);
 	}
 
-	size_t ndiscs = discIter - discData.begin();
+	size_t ndiscs = discRadiusIter - discRadiusData.begin();
 	if(ndiscs != 0) {
-		OSPReferenceWrapper<ospray::cpp::Geometry> discs("discs");
-		discs.set("bytes_per_disc", (int)sizeof(float) * 7);
-		discs.set("offset_center", (int)sizeof(float) * 0);
-		discs.set("offset_normal", (int)sizeof(float) * 3);
-		discs.set("offset_radius", (int)sizeof(float) * 6);
+		//OSPReferenceWrapper<ospray::cpp::Geometry> discs("discs");
+		auto discs = ospNewGeometry("discs");
+//		discs.setParam("bytes_per_disc", (int)sizeof(float) * 7);
+//		discs.setParam("offset_center", (int)sizeof(float) * 0);
+//		discs.setParam("offset_normal", (int)sizeof(float) * 3);
+//		discs.setParam("offset_radius", (int)sizeof(float) * 6);
+//		ospray::cpp::Data data(ndiscs * 7, OSP_FLOAT, (float*) discData.data()); //TODO : TO CHECK : Casting pointer ???
+//		data.commit();
+//		discs.setParam("discs", data);
+        auto radiusData = ospNewSharedData1D(discRadiusData.data(), OSP_FLOAT, ndiscs);
+        auto positionData = ospNewSharedData1D(discCenterData.data(), OSP_VEC3F, ndiscs);
+        auto normalData = ospNewSharedData1D(discNormalData.data(), OSP_VEC3F, ndiscs);
+        ospCommit(radiusData);
+        ospCommit(positionData);
+        ospCommit(normalData);
 
-		OSPReferenceWrapper<ospray::cpp::Data> data(ndiscs * 7, OSP_FLOAT, discData.data());
-		data.commit();
-		discs.set("discs", data);
+//      ospSetParam(discs,"disc.radius",OSP_FLOAT, discRadiusData.data());
+//		ospSetParam(discs,"disc.position",OSP_VEC3F, discCenterData.data());
+//		ospSetParam(discs,"disc.normal",OSP_VEC3F, discNormalData.data());
+        ospSetObject(discs,"disc.radius",radiusData);
+        ospSetObject(discs,"disc.position",positionData);
+        ospSetObject(discs,"disc.normal",normalData);
+        ospCommit (discs);
 
-		data = ospray::cpp::Data(ndiscs, OSP_FLOAT4, discColorData.data());
-		data.commit();
-		discs.set("color", data);
 
-		discs.setMaterial(*_ospMaterial);
-		discs.commit();
-		_ospWorld->addGeometry(discs);
+//		data = ospray::cpp::Data(ndiscs, OSP_VEC4F, discColorData.data());
+//		data.commit();
+//		discs.setParam("color", data);
+//        discs.commit();
+
+        auto colorOSPData = ospNewSharedData1D( discColorData.data(), OSP_VEC4F,ndiscs);
+        ospCommit(colorOSPData);
+
+        //ospray::cpp::GeometricModel discsModel(discs);
+        auto discsModel = ospNewGeometricModel(discs);
+        //discs.setMaterial(*_ospMaterial);
+        //ospSetObject(discs.handle(),"material",_ospMaterial->handle());
+        ospSetParam(discsModel,"material",OSP_MATERIAL,_ospMaterial);
+        ospSetObject(discsModel,"color",colorOSPData);
+        //discsModel.commit();
+        ospCommit(discsModel);
+        geometricModels.push_back(discsModel);
+		//_ospGroup->addGeometry(discs);
 	}
 
-	size_t ncones = coneIter - coneData.begin();
+	size_t ncones = coneCenterIter - coneCenterData.begin();
 	if(ncones != 0) {
-		OSPReferenceWrapper<ospray::cpp::Geometry> cones("cones");
-		cones.set("bytes_per_cone", (int)sizeof(float) * 7);
-		cones.set("offset_center", (int)sizeof(float) * 0);
-		cones.set("offset_axis", (int)sizeof(float) * 3);
-		cones.set("offset_radius", (int)sizeof(float) * 6);
+//		OSPReferenceWrapper<ospray::cpp::Geometry> cones("cones");
+//		cones.setParam("bytes_per_cone", (int)sizeof(float) * 7);
+//		cones.setParam("offset_center", (int)sizeof(float) * 0);
+//		cones.setParam("offset_axis", (int)sizeof(float) * 3);
+//		cones.setParam("offset_radius", (int)sizeof(float) * 6);
+		auto cones= ospNewGeometry("cones");
 
-		OSPReferenceWrapper<ospray::cpp::Data> data(ncones * 7, OSP_FLOAT, coneData.data());
-		data.commit();
-		cones.set("cones", data);
+//		ospray::cpp::Data data(ncones * 7, OSP_FLOAT, (float *)coneData.data()); //TODO : TO CHECK : Casting pointer ???
+//		data.commit();
+//		cones.setParam("cones", data);
+        ospSetParam(cones,"cones.center",OSP_VEC3F, coneCenterData.data());
+        ospSetParam(cones,"cones.axis",OSP_VEC3F, coneAxisData.data());
+        ospSetParam(cones,"cones.radius",OSP_FLOAT, coneRadiusData.data());
+        ospCommit (cones);
 
-		data = ospray::cpp::Data(ncones, OSP_FLOAT4, coneColorData.data());
-		data.commit();
-		cones.set("color", data);
+		//data = ospray::cpp::Data(ncones, OSP_VEC4F, coneColorData.data());
+		//data.commit();
+		//cones.setParam("color", data);
+		//cones.commit();
 
-		cones.setMaterial(*_ospMaterial);
-		cones.commit();
-		_ospWorld->addGeometry(cones);
+        //ospray::cpp::GeometricModel conesModel(cones);
+        auto conesModel = ospNewGeometricModel(cones);
+        //cones.setMaterial(*_ospMaterial);
+        //cones.setParam("material",*_ospMaterial);
+        ospSetParam(conesModel,"material", OSP_MATERIAL,_ospMaterial);
+        ospSetParam(conesModel,"color", OSP_VEC4F,coneColorData.data());
+        //ospSetObject(cones.handle(),"material",_ospMaterial->handle());
+        //conesModel.commit();
+        ospCommit (conesModel);
+        geometricModels.push_back(conesModel);
+		//_ospGroup->addGeometry(cones);
 	}
 }
 
@@ -913,10 +1190,11 @@ void OSPRayRenderer::renderMesh(const DefaultMeshPrimitive& meshBuffer)
 	if(renderVertexCount == 0)
 		return;
 
-	std::vector<ColorAT<float>> colors(renderVertexCount);
-	std::vector<Vector_3<float>> normals(renderVertexCount);
-	std::vector<Point_3<float>> positions(renderVertexCount);
-	std::vector<std::array<int,3>> indices(mesh.faceCount());
+	std::vector<ospray::vec4f> colors(renderVertexCount);
+	std::vector<ospray::vec3f> normals(renderVertexCount);
+	//std::vector<Point_3<float>> positions(renderVertexCount);
+	std::vector<ospray::vec3f> positions(renderVertexCount);
+	std::vector<ospray::vec3i> indices(mesh.faceCount());
 
 	// Repeat the following multiple times if instanced rendering is requested.
 	size_t numInstances = meshBuffer.useInstancedRendering() ? meshBuffer.perInstanceTMs().size() : 1;
@@ -951,8 +1229,13 @@ void OSPRayRenderer::renderMesh(const DefaultMeshPrimitive& meshBuffer)
 		faceNormal = faceNormals.begin();
 		if(mesh.hasNormals()) {
 			OVITO_ASSERT(mesh.normals().size() == normals.size());
-			std::transform(mesh.normals().cbegin(), mesh.normals().cend(), rv_normal, [&](const Vector3& n) {
-				return normalTM * Vector_3<float>(n);
+			/*std::transform(mesh.normals().cbegin(), mesh.normals().cend(), rv_normal, [&](const Vector3& n) {
+				return normalTM * Vector_3<float>(n); //TODO check ?
+			});*/
+		std::transform(mesh.normals().cbegin(), mesh.normals().cend(), rv_normal, [&](const Vector3& n) {
+		    auto result = normalTM * Vector_3<float>(n);
+		    ospray::vec3f vector (result.x(),result.y(),result.z());
+				return vector; //TODO check ?
 			});
 		}
 		ColorAT<float> defaultVertexColor = ColorAT<float>(meshBuffer.meshColor());
@@ -966,23 +1249,36 @@ void OSPRayRenderer::renderMesh(const DefaultMeshPrimitive& meshBuffer)
 				(*rv_indices)[v] = vindex++;
 				if(!mesh.hasNormals()) {
 					if(face->smoothingGroups())
-						*rv_normal = Vector_3<float>::Zero();
+						*rv_normal = ospray::vec3f(0,0,0); //Vector_3<float>::Zero();
 					else
-						*rv_normal = *faceNormal;
+						*rv_normal = ospray::vec3f (faceNormal->x(),faceNormal->y(),faceNormal->z());
 				}
-				*rv_pos = tm * (Point_3<float>)mesh.vertex(face->vertex(v));
+				//*rv_pos = tm * (Point_3<float>)mesh.vertex(face->vertex(v));
+                auto rv_pos_as_point = tm * (Point_3<float>)mesh.vertex(face->vertex(v));
+                *rv_pos =  ospray::vec3f(rv_pos_as_point.x(),rv_pos_as_point.y(),rv_pos_as_point.z());
 
 				if(!meshBuffer.useInstancedRendering() || meshBuffer.perInstanceColors().empty()) {
-					if(mesh.hasVertexColors())
-						*rv_color = ColorAT<float>(mesh.vertexColor(face->vertex(v)));
-					else if(mesh.hasFaceColors())
-						*rv_color = ColorAT<float>(mesh.faceColor(face - mesh.faces().constBegin()));
-					else if(face->materialIndex() < meshBuffer.materialColors().size() && face->materialIndex() >= 0)
-						*rv_color = ColorAT<float>(meshBuffer.materialColors()[face->materialIndex()]);
+					if(mesh.hasVertexColors()) {
+                        //*rv_color = ColorAT<float>(mesh.vertexColor(face->vertex(v)));
+                        auto color = mesh.vertexColor(face->vertex(v));
+                        *rv_color = ospray::vec4f(color.r(),color.g(),color.b(),color.a());
+                    }
+					else if(mesh.hasFaceColors()) {
+                        //*rv_color = ColorAT<float>(mesh.faceColor(face - mesh.faces().constBegin()));
+                        auto color = mesh.faceColor(face - mesh.faces().constBegin());
+                        *rv_color = ospray::vec4f(color.r(),color.g(),color.b(),color.a());
+                    }
+					else if(face->materialIndex() < meshBuffer.materialColors().size() && face->materialIndex() >= 0) {
+                        auto color = meshBuffer.materialColors()[face->materialIndex()];
+                        *rv_color = ospray::vec4f(color.r(),color.g(),color.b(),color.a());
+                        //*rv_color = ColorAT<float>(meshBuffer.materialColors()[face->materialIndex()]);
+                    }
 					else
-						*rv_color = defaultVertexColor;
+                        *rv_color = ospray::vec4f(defaultVertexColor.r(),defaultVertexColor.g(),defaultVertexColor.b(),defaultVertexColor.a());
+                    //*rv_color = defaultVertexColor;
 				}
-				else *rv_color = defaultVertexColor;
+				//else *rv_color = defaultVertexColor;
+				else *rv_color = ospray::vec4f(defaultVertexColor.r(),defaultVertexColor.g(),defaultVertexColor.b(),defaultVertexColor.a());
 			}
 		}
 
@@ -1010,35 +1306,80 @@ void OSPRayRenderer::renderMesh(const DefaultMeshPrimitive& meshBuffer)
 				rv_normal = normals.begin();
 				for(const auto& face : mesh.faces()) {
 					if(face.smoothingGroups() & groupMask) {
-						for(size_t fv = 0; fv < 3; fv++, ++rv_normal)
-							*rv_normal += groupVertexNormals[face.vertex(fv)];
+						for(size_t fv = 0; fv < 3; fv++, ++rv_normal) {
+                            auto normal = groupVertexNormals[face.vertex(fv)];
+                            *rv_normal += ospray::vec3f (normal.x(),normal.y(),normal.z());
+                        }
 					}
 					else rv_normal += 3;
 				}
 			}
 		}
 
-		OSPReferenceWrapper<ospray::cpp::Geometry> triangles("triangles");
+        auto triangles = ospNewGeometry("triangles");
 
-		OSPReferenceWrapper<ospray::cpp::Data> data(positions.size(), OSP_FLOAT3, positions.data());
+
+        //ospray::cpp::Data data(chunkSize * 6 * 4, OSP_VEC3F, vertices.data() + (chunkOffset * 6 * 4));
+        auto data = ospNewSharedData1D(positions.data(),OSP_VEC3F, positions.size());
+        //ospray::cpp::Data data(chunkSize * 6 * 4, OSP_VEC3F, vertices.data());
+        //ospray::cpp::Data data(vertices);
+        //data.commit();
+        ospCommit(data);
+        //ospSetParam(triangles,"vertex",OSP_VEC3F, data);
+        ospSetObject(triangles,"vertex", data);
+
+        //data = ospray::cpp::Data(chunkSize * 6 * 4,OSP_VEC4F, colors.data() + (chunkOffset * 6 * 4));
+        data = ospNewSharedData1D(colors.data() ,OSP_VEC4F, colors.size());
+        ospCommit(data);
+        ospSetObject(triangles,"vertex.color", data);
+
+        //data = ospray::cpp::Data(chunkSize * 6 * 4, OSP_VEC3F, normals.data() + (chunkOffset * 6 * 4));
+        data = ospNewSharedData1D(normals.data() ,OSP_VEC3F, normals.size());
+        ospCommit(data);
+        ospSetObject(triangles,"vertex.normal", data);
+
+        //data = ospray::cpp::Data(chunkSize * 6 * 2, OSP_VEC3I, indices.data() + (chunkOffset * 6 * 3 * 2));
+        data = ospNewSharedData1D(indices.data(),OSP_VEC3I, indices.size());
+        ospCommit(data);
+        //ospSetParam(triangles,"index", OSP_VEC3I, data);
+        ospSetObject(triangles,"index",  data);
+
+        ospCommit(triangles);
+
+        OSPGeometricModel trianglesModel = ospNewGeometricModel(triangles);
+
+        ospSetParam(trianglesModel,"material",OSP_MATERIAL, _ospMaterial);
+        ospCommit(trianglesModel);
+        geometricModels.push_back(trianglesModel);
+
+		/*
+		ospray::cpp::Geometry triangles("triangles");
+
+		ospray::cpp::Data data(positions.size(), OSP_VEC3F, positions.data());
 		data.commit();
-		triangles.set("vertex", data);
+		triangles.setParam("vertex", data);
 
-		data = ospray::cpp::Data(colors.size(), OSP_FLOAT4, colors.data());
+
+        data = ospray::cpp::Data(colors.size(), OSP_VEC4F, colors.data());
 		data.commit();
-		triangles.set("vertex.color", data);
+		triangles.setParam("vertex.color", data);
 
-		data = ospray::cpp::Data(normals.size(), OSP_FLOAT3, normals.data());
+		data = ospray::cpp::Data(normals.size(), OSP_VEC3F, normals.data());
 		data.commit();
-		triangles.set("vertex.normal", data);
+		triangles.setParam("vertex.normal", data);
 
-		data = ospray::cpp::Data(mesh.faceCount(), OSP_INT3, indices.data());
+		data = ospray::cpp::Data(mesh.faceCount(), OSP_VEC3I, indices.data());
 		data.commit();
-		triangles.set("index", data);
-
-		triangles.setMaterial(*_ospMaterial);
+		triangles.setParam("index", data);
 		triangles.commit();
-		_ospWorld->addGeometry(triangles);
+
+        ospray::cpp::GeometricModel trianglesModel(triangles);
+		//triangles.setMaterial(*_ospMaterial);
+        //ospSetObject(triangles.handle(),"material",_ospMaterial->handle());
+        trianglesModel.setParam("material", *_ospMaterial);
+        trianglesModel.commit();
+        geometricModels.push_back(trianglesModel);
+		//_ospGroup->addGeometry(triangles);*/
 	}
 }
 

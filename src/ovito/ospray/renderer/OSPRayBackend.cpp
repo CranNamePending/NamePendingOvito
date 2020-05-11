@@ -57,30 +57,35 @@ OSPRaySciVisBackend::OSPRaySciVisBackend(DataSet* dataset) : OSPRayBackend(datas
 /******************************************************************************
 * Creates the OSPRay renderer object and configures it.
 ******************************************************************************/
-ospray::cpp::Renderer OSPRaySciVisBackend::createOSPRenderer(const Color& backgroundColor)
+OSPRenderer OSPRaySciVisBackend::createOSPRenderer(const Color& backgroundColor)
 {
-	ospray::cpp::Renderer renderer("scivis");
-	renderer.set("shadowsEnabled", shadowsEnabled());
-	renderer.set("aoSamples", ambientOcclusionEnabled() ? ambientOcclusionSamples() : 0);
-	renderer.set("aoTransparencyEnabled", true);
-	renderer.set("bgColor", backgroundColor.r(), backgroundColor.g(), backgroundColor.b(), 0.0);
+	auto renderer = ospNewRenderer("scivis");
+	//renderer.set("shadowsEnabled", shadowsEnabled()); //TODO ?
+	//renderer.set("aoSamples", ambientOcclusionEnabled() ? ambientOcclusionSamples() : 0);
+	int aoSamples = (ambientOcclusionEnabled() ? ambientOcclusionSamples() : 0);
+	ospSetInt(renderer, "aoSamples", aoSamples);
+	//renderer.set"aoTransparencyEnabled", true); //TODO ?
+	//renderer.set("bgColor", backgroundColor.r(), backgroundColor.g(), backgroundColor.b(), 0.0);
+	//renderer.setParam("backgroundColor", ospray::cpp::vec4f{(float)backgroundColor.r(), (float)backgroundColor.g(), (float)backgroundColor.b(), 0.0});
+	auto color = ospcommon::math::vec4f((float)backgroundColor.r(), (float)backgroundColor.g(), (float)backgroundColor.b(), 0.0);
+    ospSetParam(renderer,"", OSP_VEC4F, color);
 	return renderer;
 }
 
 /******************************************************************************
 * Creates an OSPRay material.
 ******************************************************************************/
-ospray::cpp::Material OSPRaySciVisBackend::createOSPMaterial(const char* type)
+OSPMaterial OSPRaySciVisBackend::createOSPMaterial(const char* type)
 {
-	return ospray::cpp::Material("scivis", type);
+	return ospNewMaterial("scivis", type);
 }
 
 /******************************************************************************
 * Creates an OSPRay light.
 ******************************************************************************/
-ospray::cpp::Light OSPRaySciVisBackend::createOSPLight(const char* type)
+OSPLight OSPRaySciVisBackend::createOSPLight(const char* type)
 {
-	return ospray::cpp::Light(type);
+	return ospNewLight(type);
 }
 
 /******************************************************************************
@@ -94,27 +99,29 @@ OSPRayPathTracerBackend::OSPRayPathTracerBackend(DataSet* dataset) : OSPRayBacke
 /******************************************************************************
 * Creates the OSPRay renderer object and configures it.
 ******************************************************************************/
-ospray::cpp::Renderer OSPRayPathTracerBackend::createOSPRenderer(const Color& backgroundColor)
+OSPRenderer OSPRayPathTracerBackend::createOSPRenderer(const Color& backgroundColor)
 {
-	ospray::cpp::Renderer renderer("pathtracer");
-	renderer.set("rouletteDepth", rouletteDepth());
+	//ospray::cpp::Renderer renderer("pathtracer");
+	auto renderer = ospNewRenderer("pathtracer");
+	//renderer.set("rouletteDepth", rouletteDepth());
+	ospSetInt(renderer, "roulettePathLength",rouletteDepth());
 	return renderer;
 }
 
 /******************************************************************************
 * Creates an OSPRay material.
 ******************************************************************************/
-ospray::cpp::Material OSPRayPathTracerBackend::createOSPMaterial(const char* type)
+OSPMaterial OSPRayPathTracerBackend::createOSPMaterial(const char* type)
 {
-	return ospray::cpp::Material("pathtracer", type);
+	return ospNewMaterial("pathtracer", type);
 }
 
 /******************************************************************************
 * Creates an OSPRay light.
 ******************************************************************************/
-ospray::cpp::Light OSPRayPathTracerBackend::createOSPLight(const char* type)
+OSPLight OSPRayPathTracerBackend::createOSPLight(const char* type)
 {
-	return ospray::cpp::Light(type);
+	return ospNewLight(type);
 }
 
 }	// End of namespace

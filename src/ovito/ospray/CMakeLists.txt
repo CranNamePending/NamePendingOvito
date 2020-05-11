@@ -21,10 +21,10 @@
 #######################################################################################
 
 # Locate the OSPRay library.
-FIND_PACKAGE(ospray 1.8.0 REQUIRED)
-
+FIND_PACKAGE(ospray 2 REQUIRED)
+FIND_PACKAGE(ospcommon REQUIRED)
 # Locate the Embree library.
-FIND_PACKAGE(embree 3.3.0 REQUIRED)
+FIND_PACKAGE(embree 3.8.0 REQUIRED)
 
 # Locate Intel Thread Building Blocks (TBB) library
 FIND_PACKAGE(TBB COMPONENTS tbb tbbmalloc REQUIRED)
@@ -38,6 +38,8 @@ OVITO_STANDARD_PLUGIN(OSPRayRenderer
 		ospray::ospray
 		ospray::ospray_module_ispc
 		"${EMBREE_LIBRARIES}"
+		#/usr/lib/libospray.so.2.1.0
+		#/usr/lib/libospray_module_ispc.so.2.1.0
 )
 
 # Link to the Embree library and its dependencies.
@@ -54,12 +56,15 @@ ENDIF()
 ADD_SUBDIRECTORY(ospray_module)
 ADD_DEPENDENCIES(OSPRayRenderer ospray_module_ovito)
 
+message("ospcommon : ${ospcommon_FOUND}" )
+
 IF(NOT APPLE)
 	# Move the OSPRay shared libraries to the directory where the OSPRay extension module is being built.
 	# This is needed, because at runtime OSPRay will search for the extension module in directory containing libospray itself.
 	GET_TARGET_PROPERTY(OSPRAY_LIBRARY ospray::ospray LOCATION)
-	GET_TARGET_PROPERTY(OSPRAY_COMMON_LIBRARY ospray::ospray_common LOCATION)
+	GET_TARGET_PROPERTY(OSPRAY_COMMON_LIBRARY ospcommon::ospcommon LOCATION)
 	GET_TARGET_PROPERTY(OSPRAY_MODULE_ISPC_LIBRARY ospray::ospray_module_ispc LOCATION)
+	message("ospray : ${OSPRAY_MODULE_ISPC_LIBRARY}" )
 	OVITO_INSTALL_SHARED_LIB("${OSPRAY_LIBRARY}" ".")
 	OVITO_INSTALL_SHARED_LIB("${OSPRAY_COMMON_LIBRARY}" ".")
 	OVITO_INSTALL_SHARED_LIB("${OSPRAY_MODULE_ISPC_LIBRARY}" ".")
@@ -98,9 +103,13 @@ IF(OVITO_BUILD_GUI)
 ENDIF()
 
 # Build corresponding Python binding plugin.
-IF(OVITO_BUILD_PLUGIN_PYSCRIPT)
-	ADD_SUBDIRECTORY(scripting)
-ENDIF()
+#IF(OVITO_BUILD_PLUGIN_PYSCRIPT)
+#	ADD_SUBDIRECTORY(scripting)
+#ENDIF()
+
+#TARGET_LINK_LIBRARIES(OSPRayRenderer SHARED ${OSPRAY_LIBRARY})
+#TARGET_LINK_LIBRARIES(OSPRayRenderer SHARED ${OSPRAY_COMMON_LIBRARY})
+#TARGET_LINK_LIBRARIES(OSPRayRenderer SHARED ${OSPRAY_MODULE_ISPC_LIBRARY})
 
 # Propagate list of plugins to parent scope.
 SET(OVITO_PLUGIN_LIST ${OVITO_PLUGIN_LIST} PARENT_SCOPE)

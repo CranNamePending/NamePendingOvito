@@ -25,6 +25,7 @@
 
 #include <ovito/core/Core.h>
 #include <ovito/core/oo/RefTarget.h>
+#include <ospray/ospray.h>
 
 // Foward declarations from OSPRay library:
 namespace ospray { namespace cpp {
@@ -50,13 +51,13 @@ public:
 	OSPRayBackend(DataSet* dataset) : RefTarget(dataset) {}
 
 	/// Creates the OSPRay renderer object and configures it.
-	virtual ospray::cpp::Renderer createOSPRenderer(const Color& backgroundColor) = 0;
+	virtual OSPRenderer createOSPRenderer(const Color& backgroundColor) = 0;
 
 	/// Creates an OSPRay material.
-	virtual ospray::cpp::Material createOSPMaterial(const char* type) = 0;
+	virtual OSPMaterial createOSPMaterial(const char* type) = 0;
 
 	/// Creates an OSPRay light.
-	virtual ospray::cpp::Light createOSPLight(const char* type) = 0;
+	virtual OSPLight createOSPLight(const char* type) = 0;
 };
 
 /**
@@ -74,13 +75,13 @@ public:
 	Q_INVOKABLE OSPRaySciVisBackend(DataSet* dataset);
 
 	/// Creates the OSPRay renderer object and configures it.
-	virtual ospray::cpp::Renderer createOSPRenderer(const Color& backgroundColor) override;
+	virtual OSPRenderer createOSPRenderer(const Color& backgroundColor) override;
 
 	/// Creates an OSPRay material.
-	virtual ospray::cpp::Material createOSPMaterial(const char* type) override;
+	virtual OSPMaterial createOSPMaterial(const char* type) override;
 
 	/// Creates an OSPRay light.
-	virtual ospray::cpp::Light createOSPLight(const char* type) override;
+	virtual OSPLight createOSPLight(const char* type) override;
 
 private:
 
@@ -109,13 +110,13 @@ public:
 	Q_INVOKABLE OSPRayPathTracerBackend(DataSet* dataset);
 
 	/// Creates the OSPRay renderer object and configures it.
-	virtual ospray::cpp::Renderer createOSPRenderer(const Color& backgroundColor) override;
+	virtual OSPRenderer createOSPRenderer(const Color& backgroundColor) override;
 
 	/// Creates an OSPRay material.
-	virtual ospray::cpp::Material createOSPMaterial(const char* type) override;
+	virtual OSPMaterial createOSPMaterial(const char* type) override;
 
 	/// Creates an OSPRay light.
-	virtual ospray::cpp::Light createOSPLight(const char* type) override;
+	virtual OSPLight createOSPLight(const char* type) override;
 
 private:
 
