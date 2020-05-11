@@ -1,0 +1,144 @@
+#######################################################################################
+#
+#  Copyright 2019 Alexander Stukowski
+#
+#  This file is part of OVITO (Open Visualization Tool).
+#
+#  OVITO is free software; you can redistribute it and/or modify it either under the
+#  terms of the GNU General Public License version 3 as published by the Free Software
+#  Foundation (the "GPL") or, at your option, under the terms of the MIT License.
+#  If you do not alter this notice, a recipient may use your version of this
+#  file under either the GPL or the MIT License.
+#
+#  You should have received a copy of the GPL along with this program in a
+#  file LICENSE.GPL.txt.  You should have received a copy of the MIT License along
+#  with this program in a file LICENSE.MIT.txt
+#
+#  This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY KIND,
+#  either express or implied. See the GPL or the MIT License for the specific language
+#  governing rights and limitations.
+#
+#######################################################################################
+
+# Load OSPRay macros.
+INCLUDE(${OSPRAY_USE_FILE})
+
+FIND_PACKAGE(ospray 2.1.0 REQUIRED)
+FIND_PACKAGE(ospray 2.1.0 REQUIRED)
+# Use the Embree library.
+INCLUDE_DIRECTORIES("${EMBREE_INCLUDE_DIRS}")
+#include(ispc)
+
+
+#message("ISCP file ${ISPC_INCLUDE_DIRS}")
+#get_target_property(OSPRAY_ISPC_MODULE_INCLUDE_DIRS ospray_module_ispc
+#		INTERFACE_INCLUDE _DIRECTORIES)
+#INCLUDE_DIRECTORIES_ISPC("${EMBREE_INCLUDE_DIRS}")
+
+IF (NOT APPLE)
+    # Move the OSPRay shared libraries to the directory where the OSPRay extension module is being built.
+    # This is needed, because at runtime OSPRay will search for the extension module in directory containing libospray itself.
+    GET_TARGET_PROPERTY(OSPRAY_LIBRARY ospray::ospray LOCATION)
+    GET_TARGET_PROPERTY(OSPRAY_COMMON_LIBRARY ospcommon::ospcommon LOCATION)
+    GET_TARGET_PROPERTY(OSPRAY_MODULE_ISPC_LIBRARY ospray::ospray_module_ispc LOCATION)
+    message("ospcommon : ${OSPRAY_COMMON_LIBRARY}")
+    OVITO_INSTALL_SHARED_LIB("${OSPRAY_LIBRARY}" ".")
+    OVITO_INSTALL_SHARED_LIB("${OSPRAY_COMMON_LIBRARY}" ".")
+    OVITO_INSTALL_SHARED_LIB("${OSPRAY_MODULE_ISPC_LIBRARY}" ".")
+ELSE ()
+    INSTALL(CODE "
+		EXECUTE_PROCESS(COMMAND \"\${CMAKE_COMMAND}\" -E create_symlink \"libospray_module_ispc.0.dylib\" \"\${CMAKE_INSTALL_PREFIX}/${OVITO_RELATIVE_3RDPARTY_LIBRARY_DIRECTORY}/libospray_module_ispc.dylib\")
+	")
+ENDIF ()
+
+#Linux:
+IF (UNIX AND NOT APPLE AND (OVITO_REDISTRIBUTABLE_PACKAGE OR OVITO_BUILD_PYTHON_PACKAGE))
+    # Deploy Embree shared libraries.
+    FOREACH (lib ${EMBREE_LIBRARIES})
+        OVITO_INSTALL_SHARED_LIB("${lib}" ".")
+    ENDFOREACH ()
+    # Deploy Thread Building Blocks (TBB) shared libraries.
+    OVITO_INSTALL_SHARED_LIB("${TBB_LIBRARY}" ".")
+    OVITO_INSTALL_SHARED_LIB("${TBB_LIBRARY_MALLOC}" ".")
+ENDIF ()
+
+# Windows:
+IF (WIN32)
+    # Deploy TBB DLLs.
+    GET_TARGET_PROPERTY(TBB_DLL_LOCATION TBB::tbb IMPORTED_LOCATION_RELEASE)
+    OVITO_INSTALL_SHARED_LIB("${TBB_DLL_LOCATION}" ".")
+    GET_TARGET_PROPERTY(TBBMALLOC_DLL_LOCATION TBB::tbbmalloc IMPORTED_LOCATION_RELEASE)
+    OVITO_INSTALL_SHARED_LIB("${TBBMALLOC_DLL_LOCATION}" ".")
+
+    # Deploy Embree DLL.
+    OVITO_INSTALL_SHARED_LIB("${EMBREE_ROOT_DIR}/bin/embree3.dll" ".")
+ENDIF ()
+
+# This builds the ospray extension module which implements raytracing
+# functions for disc and cone geometry.
+
+# Note the module name is important: In order for ospray to properly find and
+# initialize a module referenced by a call to
+# "ospLoadModule(<moduleName>) this module _has_ to
+#
+# a) be called libospray_module_<modulename>.so, and
+# b) contain a (extern C linkage) initializatoin routine named
+#    void ospray_init_module_<moduleName>()
+#
+# OSPRAY_ADD_LIBRARY(ospray_module_ovito SHARED
+
+FIND_PACKAGE(ospcommon REQUIRED)
+message("ospcommon lala : ${ospcommon_FOUND}")
+message("ospcommon lala : ${OSPRAY_COMMON_LIBRARY}")
+message("ospcommon lala dir : ${OSPRAY_COMMON_INCLUDE_DIR}")
+
+ADD_LIBRARY(ospray_module_ovito SHARED)
+
+ispc_target_add_sources(ospray_module_ovito
+        # the cpp files that contain all the plugin code - parsing
+        # parameters in ospCommit(), creating and registering the object,
+        # building accel structures, etc
+        geometry/Discs.cpp
+        geometry/Cones.cpp
+        geometry/Quadrics.cpp
+
+        # the ispc files that contain the plugins for all vector code - ie,
+        # for ray-primitive intersection and 'postIntersect' (reporting info
+        # on a previously computed ray-prim intersection)
+        geometry/Discs.ispc
+        geometry/Cones.ispc
+        geometry/Quadrics.ispc
+
+        # and finally, the module init code (not doing much, but must be there)
+        moduleInit.cpp
+        )
+
+message("ispc lala : ${ISPC_INCLUDE_DIR}")
+#get_target_property(OSPRAY_ISPC_MODULE_INCLUDE_DIRS ospray_module_ispc
+		#INTERFACE_INCLUDE _DIRECTORIES)
+ispc_include_directories(${ISPC_INCLUDE_DIR})
+ispc_include_directories(${OSPRAY_ISPC_MODULE_INCLUDE_DIRS})
+ispc_include_directories(${EMBREE_INCLUDE_DIRS})
+
+
+TARGET_LINK_LIBRARIES(ospray_module_ovito PRIVATE "${OSPRAY_COMMON_LIBRARY}")
+TARGET_LINK_LIBRARIES(ospray_module_ovito PRIVATE "${EMBREE_LIBRARY}")
+TARGET_LINK_LIBRARIES(ospray_module_ovito PUBLIC ospray::ospray ospray::ospray_module_ispc)
+TARGET_LINK_LIBRARIES(ospray_module_ovito PRIVATE ${OSPRAY_COMMON_LIBRARY})
+
+#target_link_libraries(ospray_module_ovito PUBLIC ospray_module_ispc)
+
+SET_TARGET_PROPERTIES(ospray_module_ovito PROPERTIES MACOSX_RPATH TRUE)
+IF (WIN32)
+    TARGET_COMPILE_DEFINITIONS(ospray_module_ovito PRIVATE "NOMINMAX=")
+ENDIF ()
+
+SET_TARGET_PROPERTIES(ospray_module_ovito PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${Ovito_BINARY_DIR}/${OVITO_RELATIVE_3RDPARTY_LIBRARY_DIRECTORY}")
+SET_TARGET_PROPERTIES(ospray_module_ovito PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${Ovito_BINARY_DIR}/${OVITO_RELATIVE_3RDPARTY_LIBRARY_DIRECTORY}")
+
+# Install this target.
+INSTALL(TARGETS ospray_module_ovito EXPORT OVITO
+        RUNTIME DESTINATION "${OVITO_RELATIVE_3RDPARTY_LIBRARY_DIRECTORY}"
+        LIBRARY DESTINATION "${OVITO_RELATIVE_3RDPARTY_LIBRARY_DIRECTORY}"
+        ARCHIVE DESTINATION "${OVITO_RELATIVE_3RDPARTY_LIBRARY_DIRECTORY}" COMPONENT "development")
+

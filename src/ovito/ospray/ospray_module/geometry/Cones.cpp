@@ -24,7 +24,7 @@
 // 'export'ed functions from the ispc file:
 #include "Cones_ispc.h"
 // ospray core:
-#include <common/Data.h>
+
 
 /*! _everything_ in the ospray core universe should _always_ be in the
   'ospray' namespace. */
@@ -38,14 +38,55 @@ namespace ospray {
         implements all the ispc-side code for intersection,
         postintersect, etc. See BilinearPatches.ispc */
       this->ispcEquivalent = ispc::Cones_create(this);
-
+      embreeGeometry = rtcNewGeometry(ispc_embreeDevice(), RTC_GEOMETRY_TYPE_USER);
       // note we do _not_ yet do anything else here - the actual input
       // data isn't available to use until 'commit()' gets called
     }
 
-    /*! 'finalize' is what ospray calls when everything is set and
-        done, and a actual user geometry has to be built */
-    void Cones::finalize(Model *model)
+      std::string Cones::toString() const
+      {
+          return "ospray::Cones";
+      }
+
+
+      void Cones::commit()
+      {
+          this->radius = getParam<float>("radius",0.01);
+          this->centerData = getParamDataT<vec3f>("cones.center", true);
+          this->axisData = getParamDataT<vec3f>("cones.axis", true);
+          this->radiusData = getParamDataT<float>("cones.radius");
+          this->texcoordData = getParamDataT<vec2f>("cones.texcoord");
+
+
+          //radius = getParam<float>("radius", 0.01f);
+          /*radius = getParam<float>("radius", 0.01f);
+          vertexData = getParamDataT<vec3f>("discs.position", true);
+          radiusData = getParamDataT<float>("disc.radius");
+          texcoordData = getParamDataT<vec2f>("disc.texcoord");
+
+          ispc::DiscsGeometry_set(getIE(),
+                                    embreeGeometry,
+                                    ispc(vertexData),
+                                    ispc(radiusData),
+                                    ispc(texcoordData),
+                                    radius);*/
+          Cones_finalize(getIE(),embreeGeometry,ispc(centerData),ispc(radiusData),
+                         ispc(texcoordData),ispc(axisData),radius);
+
+          postCreationInfo();
+      }
+
+      size_t Cones::numPrimitives() const
+      {
+          return centerData ? centerData->size() : 0;
+      }
+
+
+
+      /*! 'finalize' is what ospray calls when everything is set and
+          done, and a actual user geometry has to be built */
+
+    /*void Cones::finalize(Model *model)
     {
       radius            = getParam1f("radius",0.01f);
       materialID        = getParam1i("materialID",0);
@@ -116,7 +157,7 @@ namespace ospray {
         offset_materialID, offset_colorID,
         huge_mesh);
     }
-
+*/
 
     /*! This macro 'registers' the Cones class under the ospray
         geometry type name of 'cones'.
@@ -127,7 +168,7 @@ namespace ospray {
 
         OSPGeometry geom = ospNewGeometry("cones") ;
     */
-    OSP_REGISTER_GEOMETRY(Cones,cones);
+    //OSP_REGISTER_GEOMETRY(Cones,cones);
 
   } // ::ospray::ovito
 } // ::ospray

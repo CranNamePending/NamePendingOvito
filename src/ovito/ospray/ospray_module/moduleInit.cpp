@@ -20,7 +20,12 @@
 //
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#include <geometry/Quadrics.h>
+#include <geometry/Cones.h>
+#include <geometry/Cylinders.h>
 #include "geometry/Discs.h"
+#include "ospray/version.h"
+
 
 /*! _everything_ in the ospray core universe should _always_ be in the 'ospray' namespace. */
 namespace ospray {
@@ -43,9 +48,30 @@ namespace ospray {
         name of the module and shared library containing this module
         (see comments regarding library name in CMakeLists.txt)
     */
-    extern "C" OSPRAY_DLLEXPORT void ospray_init_module_ovito()
-    {
-    }
+    extern "C" OSPError OSPRAY_DLLEXPORT ospray_module_init_ovito(
+            int16_t versionMajor, int16_t versionMinor, int16_t /*versionPatch*/) {
 
+
+        auto status = moduleVersionCheck(versionMajor, versionMinor);
+
+        if (status == OSP_NO_ERROR) {
+            /*! maybe one of the most important parts of this example: this
+                function 'registers' the BilinearPatches class under the ospray
+                geometry type name of 'bilinear_patches'.
+
+                It is _this_ name that one can now (assuming the module has
+                been loaded with ospLoadModule(), of course) create geometries
+                with; i.e.,
+
+                OSPGeometry geom = ospNewGeometry("bilinear_patches") ;
+            */
+            Geometry::registerType<Quadrics>("quadrics");
+            Geometry::registerType<Discs>("discs");
+            Geometry::registerType<Cones>("cones");
+            Geometry::registerType<Cylinders>("cylinders");
+        }
+
+        return status;
+    }
   } // ::ospray::ovito
 } // ::ospray

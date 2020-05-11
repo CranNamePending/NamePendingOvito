@@ -21,14 +21,26 @@
 ////////////////////////////////////////////////////////////////////////////////////////
 
 // ospray
-#include "math/vec.ih"
+/*#include "math/vec.ih"
 #include "math/box.ih"
 #include "common/Ray.ih"
 #include "common/Model.ih"
 #include "geometry/Geometry.ih"
 #include "math/sampling.ih"
 #include "ospray/OSPDataType.h"
-#include "safe_gather.ih"
+#include "safe_gather.ih"*/
+#include <common/Ray.ih>
+#include "geometry/Geometry.ih"
+#include "common/Data.ih"
+#include "math/vec.ih"
+#include "math/box.ih"
+//#include "safe_gather.ih"
+
+struct quadmatrix {
+    float a; float b; float c;
+    float d; float e; float f;
+    float g; float h; float i; float j;
+};
 
 struct Quadrics {
   /*! inherit from "Geometry" class: */
@@ -37,26 +49,34 @@ struct Quadrics {
   /*! data array that contains the quadric data (possibly but not
       necessarily including the color, which could be in color);
       most offset and stride values point into here.  */
-  uint8     *data;
-  int32      stride;
-  int        offset_center;
-  int        offset_coeff;
-  int        offset_radius;
-  int        offset_materialID;
-  int        offset_colorID;
 
-  int        materialID;
+  Data1D texcoord;
+  Data1D radius;
+  Data1D center;
+  quadmatrix *uniform coeff;
+  float global_radius;
 
-  uint8     *color;
-  int        color_stride;
-  int        color_offset;
-  int        color_format;
 
-  vec2f     *texcoord;
-  bool       huge_mesh;
+    /*uint8     *data;
+    int32      stride;
+    int        offset_center;
+    int        offset_coeff;
+    int        offset_radius;
+    int        offset_materialID;
+    int        offset_colorID;
+
+    int        materialID;
+
+    uint8     *color;
+    int        color_stride;
+    int        color_offset;
+    int        color_format;
+
+    vec2f     *texcoord;
+    bool       huge_mesh;*/
 };
 
-inline int32 Quadrics_getMaterialID(const uniform Quadrics *uniform self, int32 primID)
+/*inline int32 Quadrics_getMaterialID(const uniform Quadrics *uniform self, int32 primID)
 {
   int32 materialID = -1;
   if (self->offset_materialID >= 0) {
@@ -80,10 +100,9 @@ inline int32 Quadrics_getMaterialID(const uniform Quadrics *uniform self, int32 
     materialID = self->materialID;
   }
   return materialID;
-}
+}*/
 
-static void Quadrics_postIntersect(uniform Geometry *uniform geometry,
-                                  uniform Model *uniform model,
+static void Quadrics_postIntersect(const Geometry *uniform geometry,
                                   varying DifferentialGeometry &dg,
                                   const varying Ray &ray,
                                   uniform int64 flags)
@@ -92,12 +111,16 @@ static void Quadrics_postIntersect(uniform Geometry *uniform geometry,
 
   dg.Ng = dg.Ns = ray.Ng;
 
-  uint8 * quadricPtr = self->data + self->stride*((int64)ray.primID);
-  float radius = *((float *)(quadricPtr + self->offset_radius));
+//  uint8 * quadricPtr = self->data + self->stride*((int64)ray.primID);
+  //float radius = *((float *)(quadricPtr + self->offset_radius));
+  float radius = self->global_radius;
+    if (valid(self->radius))
+        radius = get_float(self->radius, ray.primID);
+
   // make epsilon large enough to not get lost when computing
   // |CO| = |center-ray.org| ~ radius for 2ndary rays
   dg.epsilon = radius * ulpEpsilon;
-
+/*
   if ((flags & DG_COLOR) && self->color) {
     uint32 colorID = 0;
     if (self->offset_colorID >= 0) {
@@ -129,33 +152,45 @@ static void Quadrics_postIntersect(uniform Geometry *uniform geometry,
       dg.color.w = ((c & 0xff000000) >> 24) / 255.0;
     }
   }
-
-  if (flags & DG_TEXCOORD && self->texcoord)
-    dg.st = self->texcoord[ray.primID];
+*/
+  if (and(flags & DG_TEXCOORD, valid(self->texcoord))){
+        //dg.st = self->texcoord[ray.primID];
+        dg.st = get_vec2f(self->texcoord,ray.primID);
+    }
   else
     dg.st = make_vec2f(0.0f);
-
+/*
   if (flags & DG_MATERIALID) {
     dg.materialID = Quadrics_getMaterialID(self, ray.primID);
-  }
+  }*/
+}
+
+export void *uniform Quadrics_create(void *uniform cppEquivalent)
+{
+    uniform Quadrics *uniform self = uniform new uniform Quadrics;
+    Geometry_Constructor(&self->super,cppEquivalent,Quadrics_postIntersect);
+    Data1D_Constructor(&self->center);
+    Data1D_Constructor(&self->radius);
+    Data1D_Constructor(&self->texcoord);
+    self->global_radius = 0.01;
+    return self;
 }
 
 unmasked void Quadrics_bounds(const RTCBoundsFunctionArguments *uniform args)
 {
   uniform Quadrics *uniform self = (uniform Quadrics *uniform)args->geometryUserPtr;
   uniform int primID = args->primID;
-  uniform uint8 *uniform quadricPtr = self->data + self->stride*((uniform int64)primID);
-  uniform float radius = *((uniform float *uniform)(quadricPtr+self->offset_radius));
-  uniform vec3f center = *((uniform vec3f *uniform)(quadricPtr+self->offset_center));
+  uniform float radius =  valid(self->radius) ? get_float(self->radius, primID)
+                                               : self->global_radius;
+    uniform vec3f center = get_vec3f(self->center, primID);
+  //uniform uint8 *uniform quadricPtr = self->data + self->stride*((uniform int64)primID);
+  //uniform float radius = *((uniform float *uniform)(quadricPtr+self->offset_radius));
+  //uniform vec3f center = *((uniform vec3f *uniform)(quadricPtr+self->offset_center));
   box3fa *uniform out = (box3fa *uniform)args->bounds_o;
   *out = make_box3fa(center - radius, center + radius);
 }
 
-struct quadmatrix {
-  float a; float b; float c;
-  float d; float e; float f;
-  float g; float h; float i; float j;
-};
+
 
 void Quadrics_intersect_kernel(const RTCIntersectFunctionNArguments *uniform args, const uniform bool isOcclusionTest)
 {
@@ -168,10 +203,14 @@ void Quadrics_intersect_kernel(const RTCIntersectFunctionNArguments *uniform arg
   // this assumes that the args->rayhit is actually a pointer to a varying ray!
   varying Ray *uniform ray = (varying Ray *uniform)args->rayhit;
 
-  uniform uint8 *uniform quadricPtr = self->data + self->stride*((uniform int64)primID);
-  uniform float radius = *((uniform float *uniform)(quadricPtr+self->offset_radius));
-  uniform vec3f center = *((uniform vec3f *uniform)(quadricPtr+self->offset_center));
-  uniform quadmatrix *uniform mat = ((uniform quadmatrix *uniform)(quadricPtr+self->offset_coeff));
+  //uniform uint8 *uniform quadricPtr = self->data + self->stride*((uniform int64)primID);
+  //uniform float radius = *((uniform float *uniform)(quadricPtr+self->offset_radius));
+  //uniform vec3f center = *((uniform vec3f *uniform)(quadricPtr+self->offset_center));
+    uniform float radius =  valid(self->radius) ? get_float(self->radius, primID)
+                                                : self->global_radius;
+    uniform vec3f center = get_vec3f(self->center, primID);
+  //uniform quadmatrix *uniform mat = ((uniform quadmatrix *uniform)(quadricPtr+self->offset_coeff));
+  uniform quadmatrix *uniform mat = self->coeff + primID;
 
   uniform float epsilon = log(radius);
   if(epsilon < 0.f) epsilon = -1.f/epsilon;
@@ -236,7 +275,8 @@ void Quadrics_intersect_kernel(const RTCIntersectFunctionNArguments *uniform arg
       ray->t = neg_inf;
     } else {
       ray->primID = primID;
-      ray->geomID = self->super.geomID;
+      //ray->geomID = self->super.geomID;
+      ray->geomID = args->geomID;
       ray->instID = args->context->instID[0];
       vec3f pnt = ray->org + ray->t * ray->dir;
 
@@ -267,21 +307,59 @@ unmasked void Quadrics_occluded(const struct RTCIntersectFunctionNArguments *uni
   Quadrics_intersect_kernel(args,true);
 }
 
-int32 Quadrics_getMaterialID(const Geometry *uniform const _self, const int32 primID)
+/*int32 Quadrics_getMaterialID(const Geometry *uniform const _self, const int32 primID)
 {
   const Quadrics *const uniform self = (const Quadrics *uniform)_self;
   return Quadrics_getMaterialID(self, primID);
-}
+}*/
 
-export void *uniform Quadrics_create(void *uniform cppEquivalent)
-{
-  uniform Quadrics *uniform self = uniform new uniform Quadrics;
-  Geometry_Constructor(&self->super,cppEquivalent,
-                       Quadrics_postIntersect,
-                       NULL,NULL,0,NULL);
-  return self;
-}
+export void Quadrics_finalize(void *uniform _self,
+        void *uniform _embreeGeometry,
+        const Data1D *uniform center,
+        const Data1D *uniform radius,
+        const Data1D *uniform texcoord,
+        const Data1D *uniform quadmatrixDataMemory,
+        uniform float global_radius)
+        {
+    // first, typecast to our 'real' type. since ispc can't export real
+    // types to c we have to pass 'self' in as a void*, and typecast
+    // here.
+            Quadrics *uniform self = (Quadrics * uniform) _self;
 
+
+            // set our internal data.
+            self->center = *center;
+            self->radius = *radius;
+            self->texcoord = *texcoord;
+            self->global_radius = global_radius;
+            self->super.numPrimitives = center->numItems;
+            self->coeff = (quadmatrix * uniform) quadmatrixDataMemory;
+
+
+            RTCGeometry geom = (RTCGeometry)_embreeGeometry;
+
+            // set 'us' as user data (this will be the first arg in intersect()
+            // and computebounds() callbacks
+            rtcSetGeometryUserData(geom, self);
+            // set function pointers:
+            rtcSetGeometryBoundsFunction(
+                    geom, (uniform RTCBoundsFunction)&Quadrics_bounds, self);
+            rtcSetGeometryIntersectFunction(
+                    geom, (uniform RTCIntersectFunctionN)&Quadrics_intersect);
+            rtcSetGeometryOccludedFunction(
+                    geom, (uniform RTCOccludedFunctionN)&Quadrics_occluded);
+            rtcCommitGeometry(geom);
+
+        }
+
+/*
+ *   Data1D texcoord;
+  Data1D radius;
+  Data1D center;
+  quadmatrix *uniform coeff;
+  float global_radius;
+ */
+/*
 export void QuadricsGeometry_set(void  *uniform _self
     , void *uniform _model
     , void *uniform data
@@ -336,4 +414,4 @@ export void QuadricsGeometry_set(void  *uniform _self
   rtcSetGeometryOccludedFunction(geom,(uniform RTCOccludedFunctionN)&Quadrics_occluded);
   rtcCommitGeometry(geom);
   rtcReleaseGeometry(geom);
-}
+}*/

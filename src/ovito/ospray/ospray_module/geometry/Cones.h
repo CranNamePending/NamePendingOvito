@@ -23,11 +23,13 @@
 #pragma once
 
 // ospcomon: vec3f, box3f, etcpp - generic helper stuff
-#include <ospcommon/vec.h>
-#include <ospcommon/box.h>
+//#include <math/vec.ih>
+//#include <math/box.ih>
 // ospray: everything that's related to the ospray ray tracing core
 #include <geometry/Geometry.h>
-#include <common/Model.h>
+#include <ospcommon/utility/ParameterizedObject.h>
+
+//#include <common/Model.h>
 
 /*! _everything_ in the ospray core universe should _always_ be in the
   'ospray' namespace. */
@@ -55,13 +57,25 @@ namespace ospray {
       /*! constructor - will create the 'ispc equivalent' */
       Cones();
 
+      virtual ~Cones() override  = default;
+
+      virtual std::string toString() const override;
+
+        virtual void commit() override;
+
+        virtual size_t numPrimitives() const override;
       /*! 'finalize' is what ospray calls when everything is set and
         done, and a actual user geometry has to be built */
-      virtual void finalize(Model *model) override;
+      //virtual void finalize(Model *model) override;
 
+    protected:
       /*! default radius, if no per-cone radius was specified. */
-      float radius;
-
+        float radius {0.01};
+        Ref<const DataT<math::vec3f>> centerData;
+        Ref<const DataT<float>> radiusData;
+        Ref<const DataT <math::vec2f> > texcoordData;
+        Ref<const DataT <math::vec3f> > axisData;
+/*
       size_t numCones;
       size_t bytesPerCone; //!< num bytes per cone
       int32 materialID;
@@ -73,27 +87,27 @@ namespace ospray {
 
       /*! the input data array. the data array contains a list of
           cones, each of which consists of two vec3fs + optional radius. */
-      Ref<Data> coneData;
+      /*Ref<Data> coneData;
 
       Ref<Data> texcoordData;
 
       /*! data array from which we read the per-cone color data; if
         NULL we do not have per-cone data */
-      Ref<Data> colorData;
+      /*Ref<Data> colorData;
 
       /*! The color format of the colorData array, one of:
           OSP_FLOAT3, OSP_FLOAT3A, OSP_FLOAT4 or OSP_UCHAR4 */
-      OSPDataType colorFormat;
+      //OSPDataType colorFormat;
 
       /*! stride in colorData array for accessing i'th cone's
         color. color of cone i will be read as 3 floats from
         'colorOffset+i*colorStride */
-      size_t    colorStride;
+      //size_t    colorStride;
 
       /*! offset in colorData array for accessing i'th cone's
         color. color of cone i will be read as 3 floats from
         'colorOffset+i*colorStride */
-      size_t    colorOffset;
+      //size_t    colorOffset;
     };
 
   } // ::ospray::ovito

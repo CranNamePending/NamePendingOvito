@@ -23,11 +23,14 @@
 #pragma once
 
 // ospcomon: vec3f, box3f, etcpp - generic helper stuff
-#include <ospcommon/vec.h>
-#include <ospcommon/box.h>
+//#include <ospcommon/vec.h>
+//#include <ospcommon/box.h>
+#include <ospcommon/math/vec.h>
+#include "ospcommon/math/box.h"
 // ospray: everything that's related to the ospray ray tracing core
-#include <geometry/Geometry.h>
-#include <common/Model.h>
+#include <ospcommon/utility/ParameterizedObject.h>
+#include <ospray/SDK/geometry/Geometry.h>
+//#include <common/Model.h>
 
 /*! _everything_ in the ospray core universe should _always_ be in the
   'ospray' namespace. */
@@ -50,14 +53,39 @@ namespace ospray {
       all that matters is under which name it is registered in the cpp
       file (see comments on OSPRAY_REGISTER_GEOMETRY)
     */
+    struct quadmatrix {
+        float a; float b; float c;
+        float d; float e; float f;
+        float g; float h; float i; float j;
+    };
+
     struct Quadrics : public ospray::Geometry
     {
       /*! constructor - will create the 'ispc equivalent' */
       Quadrics();
 
-      /*! 'finalize' is what ospray calls when everything is set and
+      virtual ~Quadrics() override  = default;
+
+      virtual std::string toString() const override;
+
+      virtual void commit() override;
+
+      virtual size_t numPrimitives() const override;
+
+
+        /*! 'finalize' is what ospray calls when everything is set and
         done, and a actual user geometry has to be built */
-      virtual void finalize(Model *model) override;
+
+
+    protected:
+        /*! default radius, if no per-disc radius was specified. */
+        float radius {0.01};
+        Ref<const DataT<math::vec3f>> centerData;
+        Ref<const DataT<float>> radiusData;
+        Ref<const DataT <math::vec2f> > texcoordData;
+        Ref<const DataT <quadmatrix> > coeffData;
+
+      /*virtual void finalize(Model *model) override;
 
       size_t numQuadrics;
       size_t bytesPerQuadric;
@@ -66,30 +94,30 @@ namespace ospray {
       int64 offset_radius;
       int64 offset_coeff;
       int64 offset_materialID;
-      int64 offset_colorID;
+      int64 offset_colorID;*/
 
       /*! the input data array. */
-      Ref<Data> quadricData;
+      //Ref<Data> quadricData;
 
-      Ref<Data> texcoordData;
+      //Ref<Data> texcoordData;
 
       /*! data array from which we read the per-quadric color data; if
         NULL we do not have per-quadric data */
-      Ref<Data> colorData;
+      //Ref<Data> colorData;
 
       /*! The color format of the colorData array, one of:
           OSP_FLOAT3, OSP_FLOAT3A, OSP_FLOAT4 or OSP_UCHAR4 */
-      OSPDataType colorFormat;
+      //OSPDataType colorFormat;
 
       /*! stride in colorData array for accessing i'th quadric's
         color. color of disc i will be read as 3 floats from
         'colorOffset+i*colorStride */
-      size_t    colorStride;
+      //size_t    colorStride;
 
       /*! offset in colorData array for accessing i'th quadric's
         color. color of disc i will be read as 3 floats from
         'colorOffset+i*colorStride */
-      size_t    colorOffset;
+      //size_t    colorOffset;
     };
 
   } // ::ospray::ovito

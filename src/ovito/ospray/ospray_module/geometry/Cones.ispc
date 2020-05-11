@@ -21,14 +21,20 @@
 ////////////////////////////////////////////////////////////////////////////////////////
 
 // ospray
-#include "math/vec.ih"
+/*#include "math/vec.ih"
 #include "math/box.ih"
 #include "common/Ray.ih"
 #include "common/Model.ih"
 #include "geometry/Geometry.ih"
 #include "math/sampling.ih"
 #include "ospray/OSPDataType.h"
-#include "safe_gather.ih"
+#include "safe_gather.ih"*/
+#include "common/Ray.ih"
+#include "geometry/Geometry.ih"
+#include "common/Data.ih"
+#include "math/vec.ih"
+#include "math/box.ih"
+//#include "safe_gather.ih"
 
 struct Cones {
   /*! inherit from "Geometry" class: */
@@ -37,28 +43,36 @@ struct Cones {
   /*! data array that contains the cone data (possibly but not
       necessarily including the color, which could be in color);
       most offset and stride values point into here.  */
-  uint8     *data;
-  int32      stride;
-  int        offset_center;
-  int        offset_axis;
-  int        offset_radius;
-  int        offset_materialID;
-  int        offset_colorID;
+  Data1D center;
+  Data1D axis;
+  Data1D radius;
+  Data1D texcoord;
+  float global_radius;
 
-  float      radius;
-  float      epsilon;
 
-  int        materialID;
 
-  uint8     *color;
-  int        color_stride;
-  int        color_offset;
-  int        color_format;
+    /*uint8     *data;
+    int32      stride;
+    int        offset_center;
+    int        offset_axis;
+    int        offset_radius;
+    int        offset_materialID;
+    int        offset_colorID;
 
-  vec2f     *texcoord;
-  bool       huge_mesh;
+    float      radius;
+    float      epsilon;
+
+    int        materialID;
+
+    uint8     *color;
+    int        color_stride;
+    int        color_offset;
+    int        color_format;
+
+    vec2f     *texcoord;
+    bool       huge_mesh;*/
 };
-
+/*
 inline int32 Cones_getMaterialID(const uniform Cones *uniform self, int32 primID)
 {
   int32 materialID = -1;
@@ -83,10 +97,9 @@ inline int32 Cones_getMaterialID(const uniform Cones *uniform self, int32 primID
     materialID = self->materialID;
   }
   return materialID;
-}
+}*/
 
-static void Cones_postIntersect(uniform Geometry *uniform geometry,
-                                  uniform Model *uniform model,
+static void Cones_postIntersect( const Geometry *uniform geometry,
                                   varying DifferentialGeometry &dg,
                                   const varying Ray &ray,
                                   uniform int64 flags)
@@ -95,61 +108,42 @@ static void Cones_postIntersect(uniform Geometry *uniform geometry,
 
   dg.Ng = dg.Ns = ray.Ng;
 
-  uint8 * conePtr = self->data + self->stride*((int64)ray.primID);
-  float radius =
-    (self->offset_radius >= 0) ? *((float *)(conePtr + self->offset_radius)) : self->radius;
+  float radius = get_float(self->radius, ray.primID);
+  if (valid(self->radius))
+    radius = get_float(self->radius, ray.primID);
+  //uint8 * conePtr = self->data + self->stride*((int64)ray.primID);
+  //float radius =
+  //  (self->offset_radius >= 0) ? *((float *)(conePtr + self->offset_radius)) : self->radius;
 
   // make epsilon large enough to not get lost when computing
   // |CO| = |center-ray.org| ~ radius for 2ndary rays
   dg.epsilon = radius * (1e4f * ulpEpsilon);
 
-  if ((flags & DG_COLOR) && self->color) {
-    uint32 colorID = 0;
-    if (self->offset_colorID >= 0) {
-      uniform uint8 *varying conePtr = self->data + self->stride*ray.primID;
-      colorID = *((uniform uint32 *varying)(conePtr+self->offset_colorID));
-    } else
-      colorID = ray.primID;
-    if (self->color_format == OSP_FLOAT4) {
-      dg.color = gather_byte_stride_vec4f(self->huge_mesh,
-                                          self->color + self->color_offset,
-                                          self->color_stride,
-                                          colorID);
-    } else if (self->color_format == OSP_FLOAT3
-        || self->color_format == OSP_FLOAT3A)
-    {
-      vec3f c = gather_byte_stride_vec3f(self->huge_mesh,
-                                         self->color + self->color_offset,
-                                         self->color_stride,
-                                         colorID);
-      dg.color = make_vec4f(c.x, c.y, c.z, 1.f);
-    } else if (self->color_format == OSP_UCHAR4) {
-      const uint32 c = gather_stride_uint32(self->huge_mesh,
-                                            self->color + self->color_offset,
-                                            self->color_stride,
-                                            colorID);
-      dg.color.x = (c & 0x000000ff) / 255.0;
-      dg.color.y = ((c & 0x0000ff00) >> 8) / 255.0;
-      dg.color.z = ((c & 0x00ff0000) >> 16) / 255.0;
-      dg.color.w = ((c & 0xff000000) >> 24) / 255.0;
-    }
-  }
-
-  if (flags & DG_TEXCOORD && self->texcoord)
-    dg.st = self->texcoord[ray.primID];
+if (and(flags & DG_TEXCOORD, valid(self->texcoord))){
+    dg.st = get_vec2f(self->texcoord, ray.primID);
+}
   else
     dg.st = make_vec2f(0.0f);
 
-  if (flags & DG_MATERIALID) {
-    dg.materialID = Cones_getMaterialID(self, ray.primID);
-  }
+}
+
+export void *uniform Cones_create(void *uniform cppEquivalent)
+{
+    uniform Cones *uniform self = uniform new uniform Cones;
+    Geometry_Constructor(&self->super,cppEquivalent,Cones_postIntersect);
+    Data1D_Constructor(&self->center);
+    Data1D_Constructor(&self->axis);
+    Data1D_Constructor(&self->radius);
+    Data1D_Constructor(&self->texcoord);
+    self->global_radius =0.01;
+    return self;
 }
 
 unmasked void Cones_bounds(const RTCBoundsFunctionArguments *uniform args)
 {
   uniform Cones *uniform self = (uniform Cones *uniform)args->geometryUserPtr;
   uniform int primID = args->primID;
-  uniform uint8 *uniform conePtr = self->data + self->stride*((uniform int64)primID);
+  /*uniform uint8 *uniform conePtr = self->data + self->stride*((uniform int64)primID);
   uniform bool offr = self->offset_radius >= 0;
   uniform float radius =
     offr ? *((uniform float *uniform)(conePtr+self->offset_radius)) :
@@ -158,8 +152,14 @@ unmasked void Cones_bounds(const RTCBoundsFunctionArguments *uniform args)
     *((uniform vec3f*uniform)(conePtr+self->offset_axis));
   radius = max(radius, length(axis));
   uniform vec3f center =
-    *((uniform vec3f*uniform)(conePtr+self->offset_center));
-  box3fa *uniform out = (box3fa *uniform)args->bounds_o;
+    *((uniform vec3f*uniform)(conePtr+self->offset_center));*/
+    uniform float radius = valid(self->radius) ? get_float(self->radius, primID)
+                                               : self->global_radius;
+    uniform vec3f center = get_vec3f(self->center, primID);
+    uniform vec3f axis = get_vec3f(self->axis, primID);
+    radius = max(radius, length(axis));
+
+    box3fa *uniform out = (box3fa *uniform)args->bounds_o;
   *out = make_box3fa(center - radius, center + radius);
 }
 
@@ -174,13 +174,19 @@ void Cones_intersect_kernel(const RTCIntersectFunctionNArguments *uniform args, 
   // this assumes that the args->rayhit is actually a pointer to a varying ray!
   varying Ray *uniform ray = (varying Ray *uniform)args->rayhit;
 
-  uniform uint8 *uniform conePtr = self->data + self->stride*((uniform int64)primID);
+/*  uniform uint8 *uniform conePtr = self->data + self->stride*((uniform int64)primID);
   uniform float radius = self->radius;
   if (self->offset_radius >= 0) {
     radius = *((uniform float *uniform)(conePtr+self->offset_radius));
-  }
-  uniform vec3f center = *((uniform vec3f*uniform)(conePtr+self->offset_center));
-  uniform vec3f axis = *((uniform vec3f*uniform)(conePtr+self->offset_axis));
+  }*/
+  //uniform vec3f center = *((uniform vec3f*uniform)(conePtr+self->offset_center));
+  //uniform vec3f axis = *((uniform vec3f*uniform)(conePtr+self->offset_axis));
+
+    uniform float radius = valid(self->radius) ? get_float(self->radius, primID)
+                                               : self->global_radius;
+    uniform vec3f center = get_vec3f(self->center, primID);
+    uniform vec3f axis = get_vec3f(self->axis, primID);
+
   uniform float height = length(axis);
   uniform float angle = atan(radius / height);
   uniform float cos_angle = cos(angle);
@@ -263,7 +269,8 @@ void Cones_intersect_kernel(const RTCIntersectFunctionNArguments *uniform args, 
       ray->t = neg_inf;
     } else {
       ray->primID = primID;
-      ray->geomID = self->super.geomID;
+      //ray->geomID = self->super.geomID;
+        ray->geomID = args->geomID;
       ray->instID = args->context->instID[0];
       vec3f axis_var = axis;
       ray->Ng = safe_normalize(cross(E, cross(E, axis_var)));
@@ -281,21 +288,54 @@ unmasked void Cones_occluded(const struct RTCIntersectFunctionNArguments *unifor
   Cones_intersect_kernel(args,true);
 }
 
-int32 Cones_getMaterialID(const Geometry *uniform const _self, const int32 primID)
+/*int32 Cones_getMaterialID(const Geometry *uniform const _self, const int32 primID)
 {
   const Cones *const uniform self = (const Cones *uniform)_self;
   return Cones_getMaterialID(self, primID);
-}
+}*/
 
-export void *uniform Cones_create(void *uniform cppEquivalent)
+
+export void Cones_finalize(void *uniform _self,
+                              void *uniform _embreeGeometry,
+                              const Data1D *uniform center,
+                              const Data1D *uniform radius,
+                              const Data1D *uniform texcoord,
+                              const Data1D *uniform axis,
+                              uniform float global_radius)
 {
-  uniform Cones *uniform self = uniform new uniform Cones;
-  Geometry_Constructor(&self->super,cppEquivalent,
-                       Cones_postIntersect,
-                       NULL,NULL,0,NULL);
-  return self;
+
+    // first, typecast to our 'real' type. since ispc can't export real
+    // types to c we have to pass 'self' in as a void*, and typecast
+    // here.
+    Cones *uniform self = (Cones * uniform) _self;
+
+
+    // set our internal data.
+    self->center = *center;
+    self->radius = *radius;
+    self->texcoord = *texcoord;
+    self->axis = *axis;
+    self->super.numPrimitives = center->numItems;
+    self->global_radius = global_radius;
+
+
+    RTCGeometry geom = (RTCGeometry)_embreeGeometry;
+
+    // set 'us' as user data (this will be the first arg in intersect()
+    // and computebounds() callbacks
+    rtcSetGeometryUserData(geom, self);
+    // set function pointers:
+    rtcSetGeometryBoundsFunction(
+            geom, (uniform RTCBoundsFunction)&Cones_bounds, self);
+    rtcSetGeometryIntersectFunction(
+            geom, (uniform RTCIntersectFunctionN)&Cones_intersect);
+    rtcSetGeometryOccludedFunction(
+            geom, (uniform RTCOccludedFunctionN)&Cones_occluded);
+    rtcCommitGeometry(geom);
+
 }
 
+/*
 export void ConesGeometry_set(void  *uniform _self
     , void *uniform _model
     , void *uniform data
@@ -356,4 +396,4 @@ export void ConesGeometry_set(void  *uniform _self
   rtcSetGeometryOccludedFunction(geom,(uniform RTCOccludedFunctionN)&Cones_occluded);
   rtcCommitGeometry(geom);
   rtcReleaseGeometry(geom);
-}
+}*/

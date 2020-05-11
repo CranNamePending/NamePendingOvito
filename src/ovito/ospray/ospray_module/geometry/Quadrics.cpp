@@ -20,11 +20,12 @@
 //
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#include <ospray/SDK/api/ISPCDevice.h>
 #include "Quadrics.h"
 // 'export'ed functions from the ispc file:
 #include "Quadrics_ispc.h"
 // ospray core:
-#include <common/Data.h>
+//#include <common/Data.h>
 
 /*! _everything_ in the ospray core universe should _always_ be in the
   'ospray' namespace. */
@@ -38,14 +39,54 @@ namespace ospray {
         implements all the ispc-side code for intersection,
         postintersect, etc. */
       this->ispcEquivalent = ispc::Quadrics_create(this);
+        embreeGeometry = rtcNewGeometry(ispc_embreeDevice(), RTC_GEOMETRY_TYPE_USER);
 
       // note we do _not_ yet do anything else here - the actual input
       // data isn't available to use until 'commit()' gets called
     }
 
-    /*! 'finalize' is what ospray calls when everything is set and
-        done, and a actual user geometry has to be built */
-    void Quadrics::finalize(Model *model)
+      std::string Quadrics::toString() const
+      {
+          return "ospray::Quadrices";
+      }
+
+      void Quadrics::commit()
+      {
+          this->radius = getParam<float>("radius",0.01);
+          this->centerData = getParamDataT<math::vec3f>("quadrics.center");
+          this->radiusData = getParamDataT<float>("quadrics.radius");
+          this->texcoordData = getParamDataT<math::vec2f>("quadrics.texcoord");
+          this->coeffData = getParamDataT<quadmatrix>("quadrics.coeff");
+
+
+          //radius = getParam<float>("radius", 0.01f);
+          /*radius = getParam<float>("radius", 0.01f);
+          vertexData = getParamDataT<vec3f>("discs.position", true);
+          radiusData = getParamDataT<float>("disc.radius");
+          texcoordData = getParamDataT<vec2f>("disc.texcoord");
+
+          ispc::DiscsGeometry_set(getIE(),
+                                    embreeGeometry,
+                                    ispc(vertexData),
+                                    ispc(radiusData),
+                                    ispc(texcoordData),
+                                    radius);*/
+          Quadrics_finalize(getIE(),embreeGeometry,ispc(centerData),ispc(radiusData),
+                         ispc(texcoordData),ispc(coeffData),radius);
+
+          postCreationInfo();
+      }
+
+      size_t Quadrics::numPrimitives() const
+      {
+          return centerData ? centerData->size() : 0;
+      }
+
+
+
+      /*! 'finalize' is what ospray calls when everything is set and
+          done, and a actual user geometry has to be built */
+/*    void Quadrics::finalize(Model *model)
     {
       materialID        = getParam1i("materialID",0);
       bytesPerQuadric   = getParam1i("bytes_per_quadric",14*sizeof(float));
@@ -114,7 +155,7 @@ namespace ospray {
         offset_center, offset_coeff, offset_radius,
         offset_materialID, offset_colorID,
         huge_mesh);
-    }
+    }*/
 
 
     /*! This macro 'registers' the Quadrics class under the ospray
@@ -126,7 +167,7 @@ namespace ospray {
 
         OSPGeometry geom = ospNewGeometry("quadrics") ;
     */
-    OSP_REGISTER_GEOMETRY(Quadrics,quadrics);
+//    OSP_REGISTER_GEOMETRY(Quadrics,quadrics);
 
   } // ::ospray::ovito
 } // ::ospray

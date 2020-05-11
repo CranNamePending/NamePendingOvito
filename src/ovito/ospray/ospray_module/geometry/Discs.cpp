@@ -20,11 +20,17 @@
 //
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#include <ospray/SDK/api/ISPCDevice.h>
 #include "Discs.h"
 // 'export'ed functions from the ispc file:
+//#include "Discs.ispc"
 #include "Discs_ispc.h"
 // ospray core:
-#include <common/Data.h>
+//#include <common/Data.h>
+//#include "ospray/SDK/common/Data.h"
+//#include "geometry/Geometry.h"
+//#include "math/vec.ih"
+//#include "math/box.ih"
 
 /*! _everything_ in the ospray core universe should _always_ be in the
   'ospray' namespace. */
@@ -37,15 +43,22 @@ namespace ospray {
       /*! create the 'ispc equivalent': ie, the ispc-side class that
         implements all the ispc-side code for intersection,
         postintersect, etc. See BilinearPatches.ispc */
-      this->ispcEquivalent = ispc::Discs_create(this);
+      //this->ispcEquivalent = ispc::Discs_create(this);
+        ispcEquivalent = ispc::Discs_create(this);
+        embreeGeometry = rtcNewGeometry(ispc_embreeDevice(), RTC_GEOMETRY_TYPE_USER);
 
       // note we do _not_ yet do anything else here - the actual input
       // data isn't available to use until 'commit()' gets called
     }
 
+      std::string Discs::toString() const
+      {
+          return "ospray::Discs";
+      }
+
     /*! 'finalize' is what ospray calls when everything is set and
         done, and a actual user geometry has to be built */
-    void Discs::finalize(Model *model)
+    /*void Discs::finalize(Model *model)
     {
       radius            = getParam1f("radius",0.01f);
       materialID        = getParam1i("materialID",0);
@@ -118,17 +131,50 @@ namespace ospray {
         huge_mesh);
     }
 
+*/
+      void Discs::commit()
+      {
+          this->radius = getParam<float>("radius",0.01);
+          this->vertexData = getParamDataT<vec3f>("discs.position", true);
+          this->radiusData = getParamDataT<float>("disc.radius");
+          this->normalData = getParamDataT<vec3f>("disc.normal");
+          this->texcoordData = getParamDataT<vec2f>("disc.texcoord");
 
-    /*! This macro 'registers' the Discs class under the ospray
-        geometry type name of 'discs'.
 
-        It is _this_ name that one can now (assuming the module has
-        been loaded with ospLoadModule(), of course) create geometries
-        with; i.e.,
+          //radius = getParam<float>("radius", 0.01f);
+          /*radius = getParam<float>("radius", 0.01f);
+          vertexData = getParamDataT<vec3f>("discs.position", true);
+          radiusData = getParamDataT<float>("disc.radius");
+          texcoordData = getParamDataT<vec2f>("disc.texcoord");
 
-        OSPGeometry geom = ospNewGeometry("discs") ;
-    */
-    OSP_REGISTER_GEOMETRY(Discs,discs);
+          ispc::DiscsGeometry_set(getIE(),
+                                    embreeGeometry,
+                                    ispc(vertexData),
+                                    ispc(radiusData),
+                                    ispc(texcoordData),
+                                    radius);*/
+          Discs_finalize(getIE(),embreeGeometry,ispc(vertexData),ispc(radiusData),
+                  ispc(texcoordData),ispc(normalData),radius);
+
+          postCreationInfo();
+      }
+
+      size_t Discs::numPrimitives() const
+      {
+          return vertexData ? vertexData->size() : 0;
+      }
+
+
+      /*! This macro 'registers' the Discs class under the ospray
+          geometry type name of 'discs'.
+
+          It is _this_ name that one can now (assuming the module has
+          been loaded with ospLoadModule(), of course) create geometries
+          with; i.e.,
+
+          OSPGeometry geom = ospNewGeometry("discs") ;
+      */
+      //OSPRAY_REGISTER_GEOMETRY(Discs,Discs) //Not necessary anymore ? Readme not updated ?
 
   } // ::ospray::ovito
 } // ::ospray
